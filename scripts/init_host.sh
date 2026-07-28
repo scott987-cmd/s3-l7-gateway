@@ -234,15 +234,36 @@ main(){
   log "启用并启动 docker ..."
   systemctl enable --now docker >/dev/null 2>&1 || systemctl start docker >/dev/null 2>&1 || true
 
-  # 国内拉取 nginx / sigv4-proxy 基础镜像用的 registry 加速,仅在未配置时写入。
+  # registry 加速:只写入实际可达的镜像站。写死一串固定地址是有害的——
+  # 不同网络里可达性差别很大,Docker 会按顺序对不可达的站点逐个超时重试,
+  # 表现为 docker pull 长时间无响应。仅在未配置过 daemon.json 时写入。
   if [[ ! -f /etc/docker/daemon.json ]]; then
-    mkdir -p /etc/docker
-    cat > /etc/docker/daemon.json <<'JSON'
-{
-  "registry-mirrors": ["https://docker.mirrors.ustc.edu.cn", "https://docker.m.daocloud.io", "https://mirror.ccs.tencentyun.com"]
-}
-JSON
-    systemctl restart docker >/dev/null 2>&1 || true
+    local cand=(
+      "https://docker.m.daocloud.io"
+      "https://docker.mirrors.ustc.edu.cn"
+      "https://mirror.ccs.tencentyun.com"
+      "https://dockerproxy.net"
+    )
+    local live=() m code
+    for m in "${cand[@]}"; do
+      code="$(curl -s -o /dev/null -w '%{http_code}' -m 6 "$m/v2/" 2>/dev/null || echo 000)"
+      # 200/401/403 都说明 registry 端点活着(401 是未带凭证的正常应答)
+      case "$code" in 200|401|403) live+=("$m"); log "  registry 镜像可用: $m" ;; *) log "  registry 镜像不可达($code),跳过: $m" ;; esac
+    done
+    if [[ ${#live[@]} -gt 0 ]]; then
+      mkdir -p /etc/docker
+      { printf '{\n  "registry-mirrors": ['
+        local i
+        for i in "${!live[@]}"; do
+          [[ $i -gt 0 ]] && printf ', '
+          printf '"%s"' "${live[$i]}"
+        done
+        printf ']\n}\n'
+      } > /etc/docker/daemon.json
+      systemctl restart docker >/dev/null 2>&1 || true
+    else
+      log "  无可用 registry 镜像,保持直连(境外网络通常无需加速)"
+    fi
   fi
 
   install_awscli || true
