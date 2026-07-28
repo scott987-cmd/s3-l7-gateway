@@ -71,7 +71,6 @@ jobs:
 
       - name: Health command fails closed
         run: |
-          cp .env.example .env
           if ./scripts/ops.sh health >/tmp/ops-health.out 2>&1; then
             echo "ops.sh health must fail when no gateway/components are running"
             cat /tmp/ops-health.out
