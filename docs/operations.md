@@ -17,7 +17,9 @@ When escalation is needed:
 ./scripts/ops.sh bundle
 ```
 
-The bundle includes compose config, service status, service logs, Nginx audit tail, listener state, socket summary, memory, disk, and host metadata. It does not include `.env`.
+The bundle includes Compose config, service status, service logs, Nginx audit tail, listener state, socket summary, memory, disk, and host metadata. It does not include `.env`, and the Compose config keeps environment variables as placeholders instead of rendering credential values. Before archiving, the tool scans the collected files for the current real AK/SK, session token, STS credentials, and virtual SK; it refuses to create the archive if any are present. The bundle directory is mode `0700` and the `.tgz` is mode `0600`.
+
+Audit and service logs can still contain customer object paths, virtual access-key identifiers, hostnames, and internal topology. Review the archive before sharing it outside the approved support channel.
 
 On the clean ECS validation run:
 

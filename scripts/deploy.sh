@@ -54,9 +54,12 @@ case "$SRC" in
       echo "[deploy] S3_CREDS_SOURCE=sts 需在 .env 填写 VOLC_ACCESS_KEY / VOLC_SECRET_KEY / VOLC_ROLE_TRN。"; exit 1
     fi
     echo "[deploy] 凭证源=sts:用长期 AK/SK 换 STS 临时凭证并自动续期(当前实现为 Volcengine STS 兼容)。" ;;
-  *)
+  auto)
     echo "[deploy] 凭证源=auto:运行态按 imds->sts->static 顺序自动取凭证。"
     echo "         (通用 S3 兼容对象存储建议 S3_CREDS_SOURCE=static，以跳过云厂商专属 IMDS/STS 探测)" ;;
+  *)
+    echo "[deploy] 不支持的 S3_CREDS_SOURCE=${SRC}；仅允许 static|auto|imds|sts。"
+    exit 1 ;;
 esac
 
 if docker compose version >/dev/null 2>&1; then

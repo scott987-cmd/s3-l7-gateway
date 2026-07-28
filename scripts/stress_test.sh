@@ -28,7 +28,7 @@ export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 unset AWS_SESSION_TOKEN
 
 if [[ "$MODE" == "local" ]]; then
-  ENDPOINT="https://127.0.0.1:${GW_LISTEN_PORT:-443}"
+  ENDPOINT="https://127.0.0.1:${GW_LISTEN_PORT:-8443}"
 elif [[ "$MODE" == "clb" ]]; then
   [[ -n "$CLB_IP" ]] || { echo "CLB_IP required for MODE=clb"; exit 2; }
   ENDPOINT="https://${CLB_IP}:443"

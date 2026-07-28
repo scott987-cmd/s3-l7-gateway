@@ -93,7 +93,7 @@ Useful variables:
 | `CONCURRENCY_LIST` | `1 2 4 8 16` | Concurrency steps. |
 | `ROUNDS` | `1` | Repeated rounds per step. |
 | `DIRECTION` | `both` | `put`, `get`, or `both`. |
-| `MODE` | `local` | `local` uses `127.0.0.1:<GW_LISTEN_PORT>`, `clb` uses `CLB_IP:443`. |
+| `MODE` | `local` | `local` uses `127.0.0.1:<GW_LISTEN_PORT>` (8443 when unset), `clb` uses `CLB_IP:443`. |
 | `WORKDIR` | `/tmp/s3gw-stress` | Payload, downloads, errors, result TSV. |
 
 The result TSV records success, fail, elapsed seconds, and MiB/s for each step.

@@ -18,6 +18,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`ops.sh bundle` expanded real upstream credentials into `compose.config.yml`.** The archive omitted `.env` itself, but `docker compose config` had already interpolated `S3_ACCESS_KEY`, `S3_SECRET_KEY`, session tokens, and Volcengine STS credentials. Support bundles now use `config --no-interpolate`, scan collected files for current credential values before archiving, are created under a `0700` directory with a `0600` archive, and reject non-numeric `LINES` values before embedding them in container commands.
+
+- **`ops.sh health` could return success when the gateway, authd, or creds health check failed.** It now aggregates all three results and exits non-zero on any failure, so `acceptance.sh` treats component health as a real gate.
+
+- **Direct `deploy.sh` runs accepted unknown credential-source names as `auto`.** The deploy path now explicitly accepts only `static`, `auto`, `imds`, or `sts`, matching preflight validation.
+
+- **Configuration and preflight used predictable files under `/tmp`, and preflight interpolated the endpoint host into `bash -c`.** Generated virtual credentials and DNS results are now kept in memory; endpoint/bucket hosts and listen ports are validated, and the TCP probe passes the host as a positional argument. This removes stale-secret, symlink/clobber, and malformed-host command-injection risks.
+
+- **The stress test's local fallback port was 443 while every other local default is 8443.** `stress_test.sh` now uses 8443 when `GW_LISTEN_PORT` is absent.
+- `ops.sh status` now reports the configured `GW_LISTEN_PORT` instead of only checking hard-coded ports 443 and 8443.
+
 - **`verify_security.sh` depended on curl's version-specific `--aws-sigv4` canonical request behavior.** The curl 7.76.1 shipped by the verified CentOS Stream 9 host produced signatures that the gateway correctly rejected, while AWS CLI traffic and the script's own manual replay signer passed. Ordinary positive, negative, revocation, leakage, and cleanup probes now use one Python-standard-library SigV4 implementation; the real TOS security run passes `23/0/0` without changing gateway authentication behavior.
 
 - **A repeat deployment could recreate backend containers while leaving Nginx running with stale resolved container IPs.** `deploy.sh` now force-recreates the full Compose group after builds, ensuring Nginx resolves the current authd and proxy addresses.
