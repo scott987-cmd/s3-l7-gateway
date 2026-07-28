@@ -12,6 +12,8 @@
 #   * Debian 系(apt): Debian / Ubuntu,按 codename 探测。
 #
 # 用法(远端): sudo bash scripts/init_host.sh
+#   PROBE_ONLY=1 bash scripts/init_host.sh   只探测能否装,不做任何改动
+#   (用于上线前批量校验一批机器的发行版/网络是否可行)
 # ============================================================================
 set -euo pipefail
 log(){ echo "[init] $*"; }
@@ -106,6 +108,18 @@ gpgcheck=0
 EOF
 
   $PKG clean all >/dev/null 2>&1 || true
+
+  if [[ "${PROBE_ONLY:-0}" == "1" ]]; then
+    log "  [probe] 校验 docker-ce 是否可解析 ..."
+    if $PKG -y --disablerepo='*' --enablerepo='docker-ce-stable' list --available docker-ce >/dev/null 2>&1 \
+       || $PKG -y info docker-ce >/dev/null 2>&1; then
+      log "  [probe] OK: 该主机可从 $found_mirror (centos/$found_rel) 安装 docker-ce"
+      return 0
+    fi
+    log "  [probe] 源可达但 docker-ce 不可解析"
+    return 1
+  fi
+
   log "  安装 docker-ce / cli / containerd / compose 插件 ..."
   $PKG -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin \
     || $PKG -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin \
@@ -144,6 +158,17 @@ install_docker_deb(){
     > /etc/apt/sources.list.d/docker.list
 
   apt-get update -qq || return 1
+
+  if [[ "${PROBE_ONLY:-0}" == "1" ]]; then
+    log "  [probe] 校验 docker-ce 是否可解析 ..."
+    if apt-cache policy docker-ce 2>/dev/null | grep -q 'Candidate: [0-9]'; then
+      log "  [probe] OK: 该主机可从 $found ($distro/$codename) 安装 docker-ce"
+      return 0
+    fi
+    log "  [probe] 源可达但 docker-ce 不可解析"
+    return 1
+  fi
+
   apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin || return 1
   return 0
 }
@@ -199,6 +224,11 @@ main(){
       die "未识别的包管理器(需要 dnf/yum 或 apt-get)"
     fi
     [[ "$ok" == 0 ]] || die "所有镜像源均安装失败,请检查网络/DNS 后重试"
+  fi
+
+  if [[ "${PROBE_ONLY:-0}" == "1" ]]; then
+    log "[probe] 该主机可以安装 Docker(未做任何改动)。"
+    return 0
   fi
 
   log "启用并启动 docker ..."

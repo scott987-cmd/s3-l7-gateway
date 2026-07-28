@@ -109,7 +109,19 @@ AUTHD_REPLAY_CACHE_V="$(getv AUTHD_REPLAY_CACHE 0)"
 AUTHD_REPLAY_WRITES_V="$(getv AUTHD_REPLAY_WRITES 1)"
 
 if [[ -z "$S3_BUCKET_HOST_V" && -n "$TEST_BUCKET_V" && -n "$S3_ENDPOINT_HOST_V" ]]; then
-  S3_BUCKET_HOST_V="${TEST_BUCKET_V}.${S3_ENDPOINT_HOST_V}"
+  # 常见误用:把"<bucket>.<endpoint>"这种已带 bucket 的地址填进 S3_ENDPOINT_HOST。
+  # 直接拼接会得到 <bucket>.<bucket>.<endpoint>,而对象存储的通配证书通常只覆盖
+  # 一级(*.oss-cn-beijing-internal.aliyuncs.com),上游 TLS 校验必然失败 → 502。
+  # 这里识别出来并自动拆开,而不是拼成一个必坏的名字。
+  if [[ "$S3_ENDPOINT_HOST_V" == "${TEST_BUCKET_V}."* ]]; then
+    echo "[configure] 注意: S3_ENDPOINT_HOST 已以 '${TEST_BUCKET_V}.' 开头，按虚拟主机式 bucket host 处理" >&2
+    S3_BUCKET_HOST_V="$S3_ENDPOINT_HOST_V"
+    S3_ENDPOINT_HOST_V="${S3_ENDPOINT_HOST_V#"${TEST_BUCKET_V}."}"
+    echo "[configure]   S3_BUCKET_HOST=$S3_BUCKET_HOST_V" >&2
+    echo "[configure]   S3_ENDPOINT_HOST=$S3_ENDPOINT_HOST_V" >&2
+  else
+    S3_BUCKET_HOST_V="${TEST_BUCKET_V}.${S3_ENDPOINT_HOST_V}"
+  fi
 fi
 
 missing=()
