@@ -1,0 +1,132 @@
+# =============================================================================
+# S3 网关入口:TLS 终止 + L7 治理,反代到 aws-sigv4-proxy
+#   - 客户端是【标准 S3 客户端】(boto3/aws-cli),零代码改造
+#   - 客户端用【只在网关生效的虚拟 AK/SK】算标准 SigV4
+#   - authd 验签(auth_request):用同一把虚拟 SK 重算签名比对,通过才放行
+#   - sigv4-proxy 再用【真实 S3 凭证】剥掉虚拟签名重签转发
+#   - 限流 / 审计 / 健康检查都在这一层
+# =============================================================================
+
+upstream sigv4_backend {
+    # sigv4-proxy 与 creds 共享 network namespace，8080 暴露在 creds 网络身份上。
+    server creds:8080;
+    keepalive 32;
+}
+
+upstream authd_backend {
+    server authd:8081;
+    keepalive 8;
+}
+
+map $uri $s3_upstream_uri {
+    default $uri;
+    ~^/[^/]+(?<object_path>/.*)$ $object_path;
+}
+
+server {
+    listen 8443 ssl default_server;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/server.crt;
+    ssl_certificate_key /etc/nginx/certs/server.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+    ssl_session_tickets off;
+
+    access_log /var/log/nginx/rejected_host.log s3audit;
+    return 444;
+}
+
+server {
+    listen 8443 ssl;
+    http2 on;
+    # Always include loopback names for container healthcheck; append customer gateway names via GW_SERVER_NAMES.
+    server_name 127.0.0.1 localhost ${GW_SERVER_NAMES};
+
+    # ---- 网关自己的证书(你的内部域名,可自签或内部 CA 签发)----
+    ssl_certificate     /etc/nginx/certs/server.crt;
+    ssl_certificate_key /etc/nginx/certs/server.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    # ---- 收紧加密套件:仅前向保密的 ECDHE 套件,禁用弱算法 ----
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+    # 关闭 TLS session tickets:默认票据密钥不轮转会在会话恢复层抵消 ECDHE 前向保密。
+    # 会话恢复改由上面的 shared session cache 承担,兼顾性能与前向保密。
+    ssl_session_tickets off;
+
+    # ---- OCSP stapling(需证书链含 CA;自签证书可留空,内部/公网 CA 证书建议开启)----
+    #   开启前确保 ssl_certificate 内含中间 CA 证书,并配置可解析的 resolver
+    # ssl_stapling on;
+    # ssl_stapling_verify on;
+    # ssl_trusted_certificate /etc/nginx/certs/ca-chain.crt;
+    # resolver 127.0.0.11 valid=300s;   # Docker 内置 DNS,按实际环境调整
+
+    # ---- HSTS:强制客户端后续走 HTTPS(公网暴露必备;仅内网可按需关闭)----
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # ---- 健康检查(无需验签),供容器/负载均衡探活 ----
+    location = /healthz {
+        auth_request off;
+        ${HEALTH_ALLOW_DIRECTIVES}
+        access_log /var/log/nginx/health.log s3audit;
+        proxy_pass http://authd_backend/healthz;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+    }
+
+    error_page 400 401 403 404 405 408 413 429 500 502 503 504 /_error;
+    location = /_error {
+        internal;
+        default_type text/plain;
+        return 403 "forbidden\n";
+    }
+
+    # ---- 内部验签子请求:把原始请求的头传给 authd（不传 body，不破坏流式）----
+    location = /_s3auth {
+        internal;
+        proxy_pass http://authd_backend;
+        proxy_pass_request_body off;              # 验签不需要请求体
+        proxy_set_header Content-Length "";
+        proxy_pass_request_headers on;            # 透传原始请求头，authd 按 SignedHeaders 动态取值
+        proxy_set_header X-Orig-Method          $request_method;
+        proxy_set_header X-Orig-Uri             $request_uri;   # 含 query 的原始 URI
+        proxy_set_header X-Orig-Host            $http_host;
+        proxy_set_header X-Orig-Authorization   $http_authorization;
+        proxy_set_header X-Orig-Amz-Date        $http_x_amz_date;
+        proxy_set_header X-Orig-Content-Sha256  $http_x_amz_content_sha256;
+        proxy_set_header X-Orig-Content-Length  $http_content_length;
+        proxy_set_header X-Orig-Content-Type    $http_content_type;
+        proxy_set_header X-Orig-Content-Md5     $http_content_md5;
+        proxy_set_header X-Orig-Security-Token  $http_x_amz_security_token;
+    }
+
+    # ---- S3 流量:验签 + 限流 + 反代到重签代理 ----
+    location / {
+        # 边缘统一验签:子请求到 authd 校验客户端的虚拟 SigV4
+        auth_request        /_s3auth;
+        # authd 验签通过后回传调用方 access-key,用于审计
+        auth_request_set    $s3_access_key $upstream_http_x_access_key;
+
+        limit_req  zone=s3_rl burst=20 nodelay;
+        limit_conn s3_conn 64;
+
+        proxy_pass http://sigv4_backend$s3_upstream_uri$is_args$args;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        # sigv4-proxy 会用 --host 重写 Host 并据此签名；不要向上游对象存储追加未签代理头。
+        proxy_set_header X-Forwarded-For   "";
+        proxy_set_header X-Forwarded-Proto "";
+
+        # 大对象/慢连接超时
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    300s;
+        proxy_read_timeout    300s;
+    }
+}

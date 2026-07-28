@@ -1,0 +1,4 @@
+creds_bin
+*.tmp
+cred_out
+err*.txt

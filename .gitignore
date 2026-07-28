@@ -1,0 +1,20 @@
+.env
+.env.*
+!.env.example
+auth/keys.json
+auth/keys_audit.log
+auth/authd
+creds/creds
+nginx/certs/
+*.crt
+*.key
+*.pem
+*.log
+*.bak
+deliver/
+.DS_Store
+
+# build artifacts (linux static binaries) & local backups
+auth/authd-linux-amd64
+creds/creds-linux-amd64
+.bak-*/

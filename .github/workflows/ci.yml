@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go build, vet and test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth, creds]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: ${{ matrix.service }}/go.mod
+
+      - name: gofmt
+        working-directory: ${{ matrix.service }}
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        working-directory: ${{ matrix.service }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: ${{ matrix.service }}
+        run: go test ./...
+
+      - name: Cross-build the linux/amd64 runtime binary
+        working-directory: ${{ matrix.service }}
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -buildvcs=false -trimpath -ldflags="-s -w" -o /tmp/out .
+          ls -lh /tmp/out
+
+  shell:
+    name: Shell syntax and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every script
+        run: |
+          for f in scripts/*.sh; do bash -n "$f" || exit 1; done
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck --severity=warning scripts/*.sh
+
+      - name: Scripts are executable
+        run: |
+          for f in scripts/*.sh; do
+            test -x "$f" || { echo "not executable: $f"; exit 1; }
+          done
+
+  compose:
+    name: Compose config is valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render a config and validate
+        run: |
+          cp .env.example .env
+          # Placeholder values: this validates compose syntax, not a live deployment.
+          sed -i 's|^S3_REGION=.*|S3_REGION=us-east-1|; \
+                  s|^S3_ENDPOINT_HOST=.*|S3_ENDPOINT_HOST=s3.example.com|; \
+                  s|^S3_BUCKET_HOST=.*|S3_BUCKET_HOST=bucket.s3.example.com|' .env
+          docker compose config >/dev/null
+          echo "compose config OK"
+
+      - name: Internal services must not publish host ports
+        run: |
+          cp .env.example .env
+          if docker compose config | awk '/^  (authd|creds|sigv4-proxy):/{s=1} /^  [a-z]/{if($0 !~ /(authd|creds|sigv4-proxy)/) s=0} s && /published:/{print; found=1} END{exit !found}'; then
+            echo "internal service publishes a host port"
+            exit 1
+          fi
+          echo "only the entry service is exposed"
+
+  secrets:
+    name: No credentials in the tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Key-shaped strings and private keys
+        run: |
+          if grep -RInE --exclude-dir=.git --exclude=ci.yml --exclude='*.crt' \
+            'AKLT[A-Za-z0-9]{12,}|AKIA[A-Z0-9]{16}|LTAI[A-Za-z0-9]{12,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' .; then
+            echo "potential credential committed"
+            exit 1
+          fi
+
+      - name: Example env carries no secret value
+        run: |
+          if grep -En '^(S3_ACCESS_KEY|S3_SECRET_KEY|TEST_VIRT_SK|VOLC_SECRET_KEY)=.+' .env.example; then
+            echo ".env.example must not contain credentials"
+            exit 1
+          fi
+
+      - name: Real config and key store are not committed
+        run: |
+          for f in .env auth/keys_audit.log; do
+            if git ls-files --error-unmatch "$f" 2>/dev/null; then
+              echo "$f must never be committed"; exit 1
+            fi
+          done
+          # keys.json may exist as an empty placeholder, but never with real keys.
+          if git ls-files --error-unmatch auth/keys.json 2>/dev/null; then
+            if [ "$(tr -d '[:space:]' < auth/keys.json)" != "{}" ]; then
+              echo "auth/keys.json must be an empty placeholder"; exit 1
+            fi
+          fi

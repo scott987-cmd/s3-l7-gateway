@@ -1,0 +1,200 @@
+# =============================================================================
+# S3 兼容对象存储网关 —— 三层编排：authd(Go 验签) + nginx(L7 治理) + sigv4-proxy(边缘重签)
+#
+#   标准 S3 客户端 --TLS--> nginx(8443) --子请求--> authd(8081)  验虚拟 SigV4
+#                                     \--http--> sigv4-proxy(8080) --HTTPS--> S3 真实端点
+#   客户端用【虚拟 AK/SK】算 SigV4 → authd 验签 → sigv4-proxy 用【真实 S3 凭证】重签。
+#   客户端零代码改造，全程标准 S3。
+#
+#   安全加固：
+#     - authd 为 Go 静态二进制 + scratch 镜像（无 shell / 无包管理器 / 无解释器）
+#     - 虚拟密钥经只读目录 bind mount 下发（宿主文件保持 owner=65534 且 0600）
+#     - 所有服务：read_only 根文件系统 + cap_drop ALL + no-new-privileges
+# =============================================================================
+services:
+  authd:
+    build:
+      context: ./auth
+      dockerfile: Dockerfile
+    image: s3gw-authd:go
+    restart: unless-stopped
+    expose:
+      - "8081"
+    environment:
+      AUTHD_LISTEN: 0.0.0.0:8081
+      AUTHD_KEYS_FILE: /run/auth/keys.json
+      AUTHD_REGION: ${S3_REGION}
+      AUTHD_SERVICE: s3
+      # 时钟偏差窗口收敛到 300s(原 900s)：压缩合法签名可被重放的时间窗。
+      AUTHD_MAX_SKEW: "${AUTHD_MAX_SKEW:-300}"
+      # 全局一次性 replay cache 默认关，避免误拒读类 SDK 重试/重复 GET/HEAD。
+      AUTHD_REPLAY_CACHE: ${AUTHD_REPLAY_CACHE:-0}
+      # 写方法(PUT/POST/DELETE/PATCH)强制一次性重放校验，默认开：
+      #   authd 只验头不验体 + 上游 UNSIGNED-PAYLOAD 重签，写请求签名被重放即可篡改对象。
+      AUTHD_REPLAY_WRITES: ${AUTHD_REPLAY_WRITES:-1}
+    volumes:
+      # 目录 bind mount 支持 keyctl 原子替换 keys.json 后 SIGHUP 热加载新 inode。
+      - ./auth:/run/auth:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/authd", "-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - s3gw
+
+  # 免长期 AK/SK 凭证边车（Go 静态二进制 + scratch，可移植：云 ECS / VMware / 物理机通用）。
+  # 由 S3_CREDS_SOURCE 选源，并通过本机 AWS container credentials endpoint 供 proxy 刷新：
+  #   static(默认): 通用 S3 兼容对象存储静态 AK/SK；
+  #   auto/imds/sts: Volcengine 可选实例角色/STS 获取临时凭证。
+  creds:
+    build:
+      context: ./creds
+      dockerfile: Dockerfile
+    image: s3gw-creds:go
+    restart: unless-stopped
+    command:
+      - --serve
+      - --listen=127.0.0.1:8181
+      - --ready-file=/run/creds/ready
+      - --refresh-margin=300
+    environment:
+      # 选源：static|auto|imds|sts（通用 S3 建议 static）
+      S3_CREDS_SOURCE: ${S3_CREDS_SOURCE:-static}
+      # --- Volcengine IMDS(仅云实例角色；VMware/物理机无此端点) ---
+      VOLC_IMDS_ROLE: ${VOLC_IMDS_ROLE:-}
+      VOLC_IMDS_HOST: ${VOLC_IMDS_HOST:-100.96.0.96}
+      # --- Volcengine STS 回退(仅无实例角色时使用;非 ECS 运维机兜底) ---
+      VOLC_ACCESS_KEY: ${VOLC_ACCESS_KEY:-}
+      VOLC_SECRET_KEY: ${VOLC_SECRET_KEY:-}
+      VOLC_ROLE_TRN: ${VOLC_ROLE_TRN:-}
+      VOLC_ROLE_SESSION_NAME: ${VOLC_ROLE_SESSION_NAME:-s3gw}
+      VOLC_STS_DURATION: ${VOLC_STS_DURATION:-3600}
+      VOLC_STS_HOST: ${VOLC_STS_HOST:-sts.volcengineapi.com}
+      VOLC_STS_REGION: ${VOLC_STS_REGION:-cn-north-1}
+      # --- static 通用 S3 凭证(on-prem/其他 S3 兼容对象存储直用) ---
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_SESSION_TOKEN: ${S3_SESSION_TOKEN:-}
+      S3_STATIC_RENEW: ${S3_STATIC_RENEW:-43200}
+    volumes:
+      - creds:/run/creds
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/creds", "-health", "-listen=127.0.0.1:8181"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - s3gw
+
+  sigv4-proxy:
+    # 镜像钉 digest:防止 latest 标签漂移/供应链投毒(升级时同步更新 digest)
+    image: public.ecr.aws/aws-observability/aws-sigv4-proxy:latest@sha256:34bbec3cb98403d3e040ec1dadb53bb02285f70d2f0ead2d16435fd30980abaa
+    restart: unless-stopped
+    mem_limit: ${SIGV4_PROXY_MEM_LIMIT:-4g}
+    depends_on:
+      creds:
+        condition: service_healthy
+    environment:
+      # 不再注入长期 AK/SK；proxy 通过本机容器凭证端点按需获取带 Expiration 的临时凭证。
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: http://127.0.0.1:8181/credentials
+      AWS_REGION: ${S3_REGION}
+    network_mode: "service:creds"
+    command:
+      - --name=s3
+      - --region=${S3_REGION}
+      - --host=${S3_BUCKET_HOST}
+      - --sign-host=${S3_BUCKET_HOST}
+      - --upstream-url-scheme=https
+      - --port=:8080
+      # 安全:清除客户端旧的虚拟 SigV4 签名与可能夹带的凭证头,避免污染重签(authd 已完成验签)
+      - --strip=Authorization
+      - --strip=X-Amz-Security-Token
+      - --strip=X-Amz-Date
+      - --strip=X-Amz-Content-Sha256
+      - --strip=X-Amz-Sdk-Checksum-Algorithm
+      - --strip=X-Amz-Checksum-Mode
+      - --strip=X-Amz-Trailer
+      - --strip=X-Amz-Decoded-Content-Length
+      # 上游到对象存储使用 UNSIGNED-PAYLOAD 签名，避免旧客户端 payload hash 污染重签且保持流式。
+      - --unsigned-payload
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # 说明:该镜像为 scratch(仅二进制,无 shell/工具),无法在容器内自探活;
+    # 由 nginx 侧 depends_on: service_started 保证启动顺序,存活性通过端到端健康检查体现。
+
+  nginx:
+    # 非 root nginx(master 即以 UID 101 运行,无需 root 起再降权)。
+    # 镜像钉 digest:防止标签漂移/供应链投毒(升级时同步更新 digest)
+    image: nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+    restart: unless-stopped
+    environment:
+      GW_SERVER_NAMES: ${GW_SERVER_NAMES:-}
+      HEALTH_ALLOW_DIRECTIVES: ${HEALTH_ALLOW_DIRECTIVES:-allow 127.0.0.1; allow 10.0.0.0/8; allow 100.64.0.0/10; allow 172.16.0.0/12; allow 192.168.0.0/16; deny all;}
+    depends_on:
+      authd:
+        condition: service_healthy
+      sigv4-proxy:
+        condition: service_started
+    # 默认仅绑回环地址,网关不直接暴露公网。
+    # 【公网暴露前必读】切勿把此端口直接绑到 0.0.0.0 对公网开放;
+    #   生产暴露务必前置 CLB/WAF:由 WAF 做 TLS 终止、全局限流、IP 信誉/黑白名单与 Bot 防护,
+    #   WAF/CLB 到网关推荐继续使用 HTTPS 443;nginx 侧限流(limit_req/limit_conn)仅作单 IP 兜底。
+    ports:
+      - "${GW_BIND_ADDR:-127.0.0.1}:${GW_LISTEN_PORT:-8443}:8443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/s3gw.conf.template:/etc/nginx/templates/s3gw.conf.template:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - nginx-logs:/var/log/nginx
+    # nginx 需要写 cache/run/tmp，用 tmpfs 满足同时保持镜像只读
+    read_only: true
+    tmpfs:
+      # nginx-unprivileged 以 UID 101 运行,tmpfs 默认 root:root 0755 会导致
+      # mkdir /var/cache/nginx/*_temp 被拒;显式指定 uid/gid=101 让非 root 可写。
+      - /etc/nginx/conf.d:uid=101,gid=101,mode=0700
+      - /var/cache/nginx:uid=101,gid=101,mode=0700
+      - /var/run:uid=101,gid=101,mode=0700
+      - /tmp:uid=101,gid=101,mode=0700
+    # unprivileged 镜像全程非 root(UID 101)、监听非特权端口 8443,无需任何额外 cap。
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --no-check-certificate https://127.0.0.1:8443/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - s3gw
+
+networks:
+  s3gw:
+    driver: bridge
+
+volumes:
+  nginx-logs:
+  # 凭证共享卷:tmpfs 内存后端,临时凭证不落盘;creds 边车写、sigv4-proxy 只读。
+  creds:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
