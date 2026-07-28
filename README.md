@@ -136,18 +136,16 @@ s3.put_object(Bucket="<bucket>", Key="reports/a.txt", Body=b"hello")
 
 ## 已验证与容量边界
 
-在重装后的 Alibaba Cloud Linux 4 ECS 上从零完成交付验证（初始无 Docker / Compose / aws-cli）：
+已在两个重装后的干净云主机上完成从零交付验证（初始均无 Docker / Compose / aws-cli）：
 
 | 验证项 | 结果 |
 |---|---|
-| 预检 | `PASS=21 WARN=0 FAIL=0` |
-| 冒烟 | `PASS=7 WARN=0 FAIL=0`（含空格对象键） |
-| 公网串行功能 | `PASS=10/10`；空对象、特殊对象键、Metadata、Range、CopyObject、Multipart、清理均通过 |
-| 安全行为 | `PASS=23 WARN=0 FAIL=0` |
-| 重复部署回归 | 四个容器全部运行，restart=0、OOM=0、错误日志=0、测试对象残留=0 |
-| 快速吞吐 | 64 MiB PUT / GET / MD5 校验通过 |
-| 公网健康检查 | 加固后返回 403，符合来源白名单预期 |
-| 未知 Host | 由 nginx 默认 server 关闭连接 |
+| Alibaba Cloud Linux 4 + OSS | 预检 `21/0/0`、冒烟 `7/0/0`、公网串行功能 `10/10`、安全行为 `23/0/0` |
+| CentOS Stream 9 + Volcengine TOS | 内网 S3 endpoint 回源；冒烟 `7/0/0`、公网 IP 串行功能 `10/10`、安全行为 `23/0/0` |
+| 重复部署回归 | 两套环境均通过；最终四个容器运行，restart=0、OOM=0、错误日志=0、测试对象残留=0 |
+| 功能覆盖 | 空对象、特殊对象键、Metadata、Range、CopyObject、Multipart、清理均通过 |
+| 公网边界 | `/healthz` 和匿名 S3 请求返回 403；未知 Host 由 nginx 默认 server 关闭连接 |
+| 快速吞吐 | 阿里云环境 64 MiB PUT / GET / MD5 校验通过；火山环境本轮按要求未执行性能测试 |
 
 最新容量验证（4 vCPU / 7.3 GiB ECS，`SIGV4_PROXY_MEM_LIMIT=4g`）：
 

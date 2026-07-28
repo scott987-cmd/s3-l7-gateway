@@ -25,7 +25,6 @@ set -a; [[ -f .env ]] && . ./.env; set +a
 
 PORT="${GW_LISTEN_PORT:-8443}"
 GW="https://127.0.0.1:${PORT}"
-SIG="aws:amz:${S3_REGION}:s3"
 B="$TEST_BUCKET"
 PREFIX="s3gw-verify"
 SNI="$(echo "${GW_SERVER_NAMES:-localhost}" | awk '{print $1}')"
@@ -50,15 +49,78 @@ restore_key() {
 }
 trap restore_key EXIT
 
-# 带虚拟签名请求网关,回显 HTTP 码
-# 注意:curl 在连接失败时 -w '%{http_code}' 已经会输出 000,
-# 再接 "|| echo 000" 会拼成 000000,把判断打乱。这里只取 -w 的输出。
-gw_code(){ # gw_code <method> <path+query> [ak] [sk]
-  local m="$1" p="$2" ak="${3:-$TEST_VIRT_AK}" sk="${4:-$TEST_VIRT_SK}" c
-  c="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 20 -X "$m" \
-    --aws-sigv4 "$SIG" --user "${ak}:${sk}" "${GW}${p}" 2>/dev/null)"
-  printf '%s' "${c:-000}"
+# 用 Python 标准库构造 SigV4，避免旧版 curl 的 --aws-sigv4 canonical request 差异。
+gw_request(){ # gw_request <method> <path+query> [ak] [sk] [body] [code|body|headers]
+  local m="$1" p="$2" ak="${3:-$TEST_VIRT_AK}" sk="${4:-$TEST_VIRT_SK}"
+  local body="${5:-}" mode="${6:-code}"
+  METHOD="$m" URI="$p" AK="$ak" SK="$sk" BODY="$body" MODE="$mode" \
+    REGION="$S3_REGION" SNI="$SNI" PORT="$PORT" python3 - <<'PY'
+import datetime, hashlib, hmac, http.client, os, ssl, sys, urllib.parse
+
+method, uri = os.environ["METHOD"], os.environ["URI"]
+ak, sk, region = os.environ["AK"], os.environ["SK"], os.environ["REGION"]
+sni, port = os.environ["SNI"], int(os.environ["PORT"])
+body = os.environ["BODY"].encode()
+parts = urllib.parse.urlsplit(uri)
+path = parts.path or "/"
+quote = lambda value: urllib.parse.quote(value, safe="-_.~")
+pairs = sorted((quote(k), quote(v)) for k, v in
+               urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
+query = "&".join(f"{k}={v}" for k, v in pairs)
+now = datetime.datetime.now(datetime.timezone.utc)
+amz_date, date_stamp = now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
+payload_hash = hashlib.sha256(body).hexdigest()
+signed_headers = "host;x-amz-content-sha256;x-amz-date"
+canonical_headers = (
+    f"host:{sni}\n"
+    f"x-amz-content-sha256:{payload_hash}\n"
+    f"x-amz-date:{amz_date}\n"
+)
+canonical_request = "\n".join([
+    method, path, query, canonical_headers, signed_headers, payload_hash,
+])
+scope = f"{date_stamp}/{region}/s3/aws4_request"
+string_to_sign = "\n".join([
+    "AWS4-HMAC-SHA256", amz_date, scope,
+    hashlib.sha256(canonical_request.encode()).hexdigest(),
+])
+sign = lambda key, msg: hmac.new(key, msg.encode(), hashlib.sha256).digest()
+signing_key = sign(sign(sign(sign(("AWS4" + sk).encode(), date_stamp),
+                             region), "s3"), "aws4_request")
+signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+headers = {
+    "Host": sni,
+    "x-amz-content-sha256": payload_hash,
+    "x-amz-date": amz_date,
+    "Content-Length": str(len(body)),
+    "Authorization": (
+        f"AWS4-HMAC-SHA256 Credential={ak}/{scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    ),
 }
+try:
+    conn = http.client.HTTPSConnection(
+        "127.0.0.1", port, context=ssl._create_unverified_context(), timeout=20,
+    )
+    conn.request(method, uri, body=body, headers=headers)
+    response = conn.getresponse()
+    data = response.read()
+    mode = os.environ["MODE"]
+    if mode == "body":
+        sys.stdout.buffer.write(data)
+    elif mode == "headers":
+        for name, value in response.getheaders():
+            print(f"{name}: {value}")
+    else:
+        print(response.status, end="")
+    conn.close()
+except Exception:
+    print("000", end="")
+PY
+}
+gw_code(){ gw_request "$1" "$2" "${3:-$TEST_VIRT_AK}" "${4:-$TEST_VIRT_SK}" "${5:-}" code; }
+gw_body(){ gw_request "$1" "$2" "${3:-$TEST_VIRT_AK}" "${4:-$TEST_VIRT_SK}" "${5:-}" body; }
+gw_headers(){ gw_request "$1" "$2" "${3:-$TEST_VIRT_AK}" "${4:-$TEST_VIRT_SK}" "${5:-}" headers; }
 
 sec "1. 入口与健康检查"
 hz="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "${GW}/healthz" 2>/dev/null)"; hz="${hz:-000}"
@@ -119,10 +181,9 @@ sec "4. 桶级操作路由(path-style → virtual-hosted)"
 sec "5. 对象读写一致性"
 KEY="${PREFIX}/verify-$$.txt"
 PAYLOAD="s3gw-verify-$(date -u +%s)"
-put="$(printf '%s' "$PAYLOAD" | curl -sk -o /dev/null -w '%{http_code}' --max-time 20 \
-  -X PUT --aws-sigv4 "$SIG" --user "${TEST_VIRT_AK}:${TEST_VIRT_SK}" --data-binary @- "${GW}/${B}/${KEY}" 2>/dev/null)"; put="${put:-000}"
+put="$(gw_code PUT "/${B}/${KEY}" "$TEST_VIRT_AK" "$TEST_VIRT_SK" "$PAYLOAD")"
 [[ "$put" == "200" ]] && ok "PUT 对象" || ng "PUT 对象返回 $put"
-got="$(curl -sk --max-time 20 --aws-sigv4 "$SIG" --user "${TEST_VIRT_AK}:${TEST_VIRT_SK}" "${GW}/${B}/${KEY}" 2>/dev/null)"
+got="$(gw_body GET "/${B}/${KEY}")"
 [[ "$got" == "$PAYLOAD" ]] && ok "GET 内容一致" || ng "GET 内容不一致"
 
 sec "6. 写请求重放防护"
@@ -180,7 +241,7 @@ if [[ -n "${S3_ACCESS_KEY:-}" ]]; then
   [[ -n "${S3_SECRET_KEY:-}" ]] && { grep -qF "$S3_SECRET_KEY" <<<"$logs" && ng "容器日志出现真实 SK" || ok "容器日志无真实 SK"; }
   audit="$(docker compose exec -T nginx sh -c 'tail -n 500 /var/log/nginx/s3audit.log' 2>/dev/null </dev/null)"
   grep -qF "$S3_ACCESS_KEY" <<<"$audit" && ng "审计日志出现真实 AK" || ok "审计日志无真实 AK"
-  hdr="$(curl -sk -D- -o /dev/null --max-time 20 --aws-sigv4 "$SIG" --user "${TEST_VIRT_AK}:${TEST_VIRT_SK}" "${GW}/${B}/?list-type=2&max-keys=1" 2>/dev/null)"
+  hdr="$(gw_headers GET "/${B}/?list-type=2&max-keys=1")"
   grep -qiF "$S3_ACCESS_KEY" <<<"$hdr" && ng "响应头出现真实 AK" || ok "响应头无真实凭证"
 else
   warn "S3_ACCESS_KEY 未在环境中(可能用 imds/sts),跳过凭证泄露检查"
@@ -216,16 +277,13 @@ done
   || ng "$hard_bad 个容器未达到加固基线"
 
 sec "清理"
-curl -sk -o /dev/null --max-time 20 -X DELETE --aws-sigv4 "$SIG" --user "${TEST_VIRT_AK}:${TEST_VIRT_SK}" "${GW}/${B}/${KEY}" 2>/dev/null
+gw_code DELETE "/${B}/${KEY}" >/dev/null
 # 重放测试产生的对象按前缀列出后逐个删除
-curl -sk --max-time 20 --aws-sigv4 "$SIG" --user "${TEST_VIRT_AK}:${TEST_VIRT_SK}" \
-  "${GW}/${B}/?list-type=2&prefix=${PREFIX}/&max-keys=100" 2>/dev/null \
+gw_body GET "/${B}/?list-type=2&prefix=${PREFIX}/&max-keys=100" \
   | grep -o '<Key>[^<]*</Key>' | sed 's/<[^>]*>//g' | while read -r k; do
-      [[ -n "$k" ]] && curl -sk -o /dev/null --max-time 20 -X DELETE \
-        --aws-sigv4 "$SIG" --user "${TEST_VIRT_AK}:${TEST_VIRT_SK}" "${GW}/${B}/${k}" 2>/dev/null
+      [[ -n "$k" ]] && gw_code DELETE "/${B}/${k}" >/dev/null
     done
-left="$(curl -sk --max-time 20 --aws-sigv4 "$SIG" --user "${TEST_VIRT_AK}:${TEST_VIRT_SK}" \
-  "${GW}/${B}/?list-type=2&prefix=${PREFIX}/&max-keys=100" 2>/dev/null | grep -c '<Key>')"
+left="$(gw_body GET "/${B}/?list-type=2&prefix=${PREFIX}/&max-keys=100" | grep -c '<Key>')"
 [[ "$left" -eq 0 ]] && ok "测试对象已清理" || warn "仍有 $left 个测试对象残留(前缀 ${PREFIX}/)"
 
 printf '\n==================== 结果 ====================\n'

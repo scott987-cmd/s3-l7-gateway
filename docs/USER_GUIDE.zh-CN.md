@@ -537,7 +537,7 @@ CONCURRENCY_LIST="1 2 4 8 16 32" \
 - [ ] 已验证 `ops.sh doctor` 和 `ops.sh bundle` 可用于支持排查。
 ## 十二、已完成的真实验证
 
-项目已在重装后的 Alibaba Cloud Linux 4 ECS 上完成从零交付验证。初始主机没有 Docker、Compose 和 aws-cli；通过 `init_host.sh` 完成依赖初始化后，使用参数化 `acceptance.sh` 完成配置、部署、健康检查和冒烟测试。
+项目已分别在重装后的 Alibaba Cloud Linux 4 ECS + OSS、CentOS Stream 9 ECS + Volcengine TOS 上完成从零交付验证。初始主机均没有 Docker、Compose 和 aws-cli；通过 `init_host.sh` 完成依赖初始化后，使用参数化 `acceptance.sh` 完成配置、部署、健康检查和冒烟测试。
 
 | 验证项 | 结果 |
 |---|---|
@@ -550,6 +550,8 @@ CONCURRENCY_LIST="1 2 4 8 16 32" \
 | CLB 业务链路 | 经 CLB 的签名 PUT/GET 和内容比对成功。 |
 | 公网健康检查 | 安全加固后返回 403，符合健康来源白名单预期。 |
 | 未知 Host | 由 nginx 默认 server 关闭连接，不进入业务处理。 |
+
+2026-07-29 的火山环境使用 `cn-beijing` TOS 内网 S3 endpoint 回源，监听 `0.0.0.0:8443`。一键验收冒烟为 `7/0/0`，通过公网 IP 的串行功能测试为 `10/10`，安全行为为 `23/0/0`；重复部署后再次通过 `7/0/0`。最终四个容器 restart=0、OOM=0、错误日志=0，审计日志 JSON 全部有效，测试对象残留=0。公网 `/healthz` 与匿名 S3 请求均返回 403，未知 Host 关闭连接。本轮按要求没有执行性能测试。
 
 这些数据用于证明交付流程和安全机制已经实际验证，不应直接视为客户生产 SLA。当前结论是“功能生产候选通过”；公网 IP 与自签证书仅用于受控验收。客户上线前仍需使用正式域名和受信任证书，经 WAF/CLB 完成最终链路验收，并在自己的对象存储、网络、主机规格和业务负载下完成容量验证。
 

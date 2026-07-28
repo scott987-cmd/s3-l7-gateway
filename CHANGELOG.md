@@ -18,6 +18,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`verify_security.sh` depended on curl's version-specific `--aws-sigv4` canonical request behavior.** The curl 7.76.1 shipped by the verified CentOS Stream 9 host produced signatures that the gateway correctly rejected, while AWS CLI traffic and the script's own manual replay signer passed. Ordinary positive, negative, revocation, leakage, and cleanup probes now use one Python-standard-library SigV4 implementation; the real TOS security run passes `23/0/0` without changing gateway authentication behavior.
+
 - **A repeat deployment could recreate backend containers while leaving Nginx running with stale resolved container IPs.** `deploy.sh` now force-recreates the full Compose group after builds, ensuring Nginx resolves the current authd and proxy addresses.
 
 - **The upstream signing proxy omitted `Content-Length: 0` for empty PUT requests and signed before copying `x-amz-*` business headers.** Aliyun OSS consequently rejected zero-byte objects with `MissingContentLength` and metadata writes with `SignatureDoesNotMatch`. The delivery now loads an audited Linux/amd64 compatibility image based on upstream commit `9e83e1b5d2372d5ced60a85b912906e3a34502a2`; patch provenance and binary/archive hashes are recorded in `patches/aws-sigv4-proxy-s3-compat.patch`.
@@ -53,6 +55,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Notes
 
 The clean Alibaba Cloud Linux 4 acceptance run completed with preflight `21/0/0`, smoke `7/0/0`, and security verification `23/0/0`. With 64 MiB objects and a 4 GiB proxy limit, concurrency 1–16 passed; concurrency 32 produced 31/32 successful PUTs and two memcg OOM restarts, establishing the current single-instance failure boundary.
+
+The clean Volcengine CentOS Stream 9 + TOS run completed on 2026-07-29 using the `cn-beijing` private S3 endpoint: acceptance smoke `7/0/0`, public-IP serial functional coverage `10/10`, security verification `23/0/0`, repeat-deployment smoke `7/0/0`, zero container restarts/OOMs/log errors, and zero test-object residue. No performance test was run in this validation.
 
 Prebuilt Linux amd64 runtime binaries are deliberately **not** tracked in git — they are build artifacts, already listed in `.gitignore`. `deploy.sh` builds them with Go when they are missing, and `scripts/package.sh` produces delivery archives that include them for hosts without Go.
 
