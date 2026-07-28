@@ -796,7 +796,7 @@ LINES=500 ./scripts/ops.sh audit
     <div class="sec-head">
       <div class="sec-label">七、验证结果与容量边界</div>
       <h2>包含失败边界，而不只是成功用例</h2>
-      <p>在重装后的 Alibaba Cloud Linux 4 ECS 上从零完成交付验证——初始主机没有 Docker、Compose 和 aws-cli。</p>
+      <p>已在重装后的 Alibaba Cloud Linux 4 + OSS、CentOS Stream 9 + Volcengine TOS 两套干净环境完成从零交付验证——初始主机均没有 Docker、Compose 和 aws-cli。</p>
     </div>
 
     <div class="stats" style="margin-bottom:18px">
@@ -815,6 +815,11 @@ LINES=500 ./scripts/ops.sh audit
         <div class="sv">64 MiB × 32</div>
         <div class="sd">4 GiB 限额下 <b>sigv4-proxy 触发 OOM</b>；默认安全阶梯止于并发 16</div>
       </div>
+    </div>
+
+    <div class="note" style="margin-top:16px">
+      <span class="ni">✓</span>
+      <div><b>2026-07-29 火山 TOS 跨云回归通过。</b>使用 <code class="inl">cn-beijing</code> 内网 S3 endpoint 回源，监听 <code class="inl">0.0.0.0:8443</code>：一键冒烟 7 / 7、公网 IP 串行功能 10 / 10、安全行为 23 / 23、重复部署后冒烟再次 7 / 7。最终容器 restart=0、OOM=0、错误日志=0、审计 JSON 无效行=0、测试对象残留=0。本轮未执行性能测试。</div>
     </div>
 
     <div class="grid g2">
