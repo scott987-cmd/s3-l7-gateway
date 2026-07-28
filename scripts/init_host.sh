@@ -47,7 +47,14 @@ rpm_releasever_candidates(){
     amzn)    case "$major" in 2) guess=7 ;; *) guess=9 ;; esac ;;
     openEuler|openeuler) guess=9 ;;
     fedora)  guess=9 ;;
-    *)       guess="" ;;
+    *)
+      # 未知发行版:用 ID_LIKE 判断家族。多数 RHEL 衍生版会声明
+      # ID_LIKE="rhel centos fedora" 之类,此时按 el9 起步比直接放弃更可能命中。
+      case " $OS_LIKE " in
+        *" rhel "*|*" centos "*|*" fedora "*|*" anolis "*) guess=9 ;;
+        *) guess="" ;;
+      esac
+      ;;
   esac
   local out=()
   [[ -n "$guess" ]] && out+=("$guess")
