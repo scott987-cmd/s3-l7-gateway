@@ -142,6 +142,8 @@ Capacity on 2 vCPU / 7.4 GiB — including the failure boundary:
 | 256 MiB object, concurrency 4 / 8 | Succeeded |
 | 256 MiB object, concurrency 16 | `sigv4-proxy` OOM |
 
+> **A note on these numbers.** They were produced by `stress_test.sh` before a defect in it was fixed: every worker in a concurrency batch landed on the **same object key** rather than distinct objects, because of when shell variables were expanded. The concurrency levels and object sizes were real, and the `sigv4-proxy` OOM at 256 MiB × 16 still holds (the memory pressure comes from concurrent large-object streams themselves) — but throughput figures should be re-measured with the fixed tool in your own environment.
+
 `SIGV4_PROXY_MEM_LIMIT=4g` bounds the blast radius but does not remove the large-object memory characteristic. **Re-test at your own object sizes, concurrency and host size before production.**
 
 ## Not supported today

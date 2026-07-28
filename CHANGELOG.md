@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Continuous integration: `gofmt`, `go vet` and `go test` for both Go services, shell parsing and ShellCheck, a Docker Compose config validation, and a credential scan over the whole tree.
 - Documentation site including an L4-versus-L7 comparison backed by the measured small-object numbers, so the trade-off can be read rather than argued.
 
+### Fixed
+
+- `stress_test.sh`: `key` was assigned in the same `local` statement as `c` and `idx`, so those expanded before the assignments took effect and every worker in a concurrency batch wrote to the *same* object key instead of distinct ones. Concurrency levels and object sizes in past runs were still real, and the `sigv4-proxy` OOM boundary still holds, but throughput figures from before this fix should be re-measured.
+- `smoke_test.sh`: an unguarded `cd` could continue in the wrong directory if it failed.
+
 ### Changed
 
 - Third-party provenance is stated up front: this is an independent project, not an official or endorsed offering of any vendor. The `LICENSE` copyright holder is filled in.

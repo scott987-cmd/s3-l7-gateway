@@ -75,24 +75,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Render a config and validate
+      - name: Render placeholder config and validate
         run: |
+          # Placeholder values only: this validates compose syntax, not a deployment.
           cp .env.example .env
-          # Placeholder values: this validates compose syntax, not a live deployment.
-          sed -i 's|^S3_REGION=.*|S3_REGION=us-east-1|; \
-                  s|^S3_ENDPOINT_HOST=.*|S3_ENDPOINT_HOST=s3.example.com|; \
-                  s|^S3_BUCKET_HOST=.*|S3_BUCKET_HOST=bucket.s3.example.com|' .env
+          sed -i -e 's|^S3_REGION=.*|S3_REGION=us-east-1|' \
+                 -e 's|^S3_ENDPOINT_HOST=.*|S3_ENDPOINT_HOST=s3.example.com|' \
+                 -e 's|^S3_BUCKET_HOST=.*|S3_BUCKET_HOST=bucket.s3.example.com|' .env
           docker compose config >/dev/null
           echo "compose config OK"
 
-      - name: Internal services must not publish host ports
+      - name: Only the entry service may publish host ports
         run: |
           cp .env.example .env
-          if docker compose config | awk '/^  (authd|creds|sigv4-proxy):/{s=1} /^  [a-z]/{if($0 !~ /(authd|creds|sigv4-proxy)/) s=0} s && /published:/{print; found=1} END{exit !found}'; then
-            echo "internal service publishes a host port"
+          exposed="$(docker compose config --format json \
+            | jq -r '.services | to_entries[] | select((.value.ports // []) | length > 0) | .key' \
+            | sort | paste -sd, -)"
+          echo "services publishing host ports: ${exposed:-<none>}"
+          if [ "$exposed" != "nginx" ]; then
+            echo "expected only nginx to publish a host port"
             exit 1
           fi
-          echo "only the entry service is exposed"
 
   secrets:
     name: No credentials in the tree

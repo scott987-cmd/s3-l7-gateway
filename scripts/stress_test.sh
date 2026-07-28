@@ -49,7 +49,10 @@ echo "== stress mode=$MODE endpoint=$ENDPOINT bucket=$BUCKET size=${SIZE_MB}MB r
 echo "== payload_md5=$MD5_UP workdir=$WORKDIR"
 
 run_one() {
-  local dir="$1" c="$2" idx="$3" round="$4" key="${KEY_PREFIX}-${MODE}-${SIZE_MB}m-c${c}-i${idx}.bin"
+  local dir="$1" c="$2" idx="$3" round="$4"
+  # 必须分成两条 local：同一条 local 里的 ${c}/${idx} 在赋值生效前就被展开，
+  # 会得到空值，导致所有并发 worker 落到同一个 object key 上。
+  local key="${KEY_PREFIX}-${MODE}-${SIZE_MB}m-c${c}-i${idx}.bin"
   if [[ "$dir" == "put" ]]; then
     "${AWS[@]}" s3api put-object --bucket "$BUCKET" --key "$key" --body "$UP" >/dev/null
   else

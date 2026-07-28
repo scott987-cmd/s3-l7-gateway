@@ -767,6 +767,11 @@ LINES=500 ./scripts/ops.sh audit
 
     <div class="note" style="margin-top:16px">
       <span class="ni">!</span>
+      <div><b>关于以上容量数字的说明。</b>这些数据由 <code class="inl">stress_test.sh</code> 在一处已修复的缺陷之前跑出：当时同一并发批次内的所有 worker 因变量展开时机问题落到了<b>同一个 object key</b> 上，而不是各自独立的对象。并发数与对象大小是真实的，256 MiB × 16 触发 OOM 的结论也仍然成立（内存压力来自并发大对象流本身）；但吞吐类数字建议用修复后的工具在你自己的环境重新测量。</div>
+    </div>
+
+    <div class="note" style="margin-top:16px">
+      <span class="ni">!</span>
       <div><code class="inl">SIGV4_PROXY_MEM_LIMIT=4g</code> 限制单容器故障半径，但<b>没有消除</b>大对象高并发的内存特征。以上全部是受控测试参考，<b>不构成生产 SLA</b>——生产参数必须以你自己的对象大小、并发和主机规格重新压测。</div>
     </div>
   </div>

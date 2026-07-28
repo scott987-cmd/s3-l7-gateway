@@ -18,7 +18,7 @@
 #       本脚本已强制 AWS_S3_ADDRESSING_STYLE=path。
 # ============================================================================
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 set -a; [[ -f .env ]] && . ./.env; set +a
 
