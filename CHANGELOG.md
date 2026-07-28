@@ -6,11 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `docs/aliyun-oss.zh-CN.md`: a verified Alibaba Cloud OSS deployment guide, recording that OSS accepts AWS SigV4, that it does not validate the region string but does require service `s3`, the internal-versus-public endpoint distinction, and the full measured result of a from-zero deployment.
+
 - Public repository scaffolding: Chinese-default README with an English version, `DISCLAIMER.md`, `SECURITY.md`, `CONTRIBUTING.md`, this changelog, and a published documentation site under `docs/`.
 - Continuous integration: `gofmt`, `go vet` and `go test` for both Go services, shell parsing and ShellCheck, a Docker Compose config validation, and a credential scan over the whole tree.
 - Documentation site including an L4-versus-L7 comparison backed by the measured small-object numbers, so the trade-off can be read rather than argued.
 
 ### Fixed
+
+- `init_host.sh` could not install Docker on Alibaba Cloud Linux 4 / Anolis, and by extension on any RHEL-family distribution whose `$releasever` is not one docker-ce publishes for. docker-ce ships only `centos/{7,8,9,10}`; Alinux 4 expands `$releasever` to `4`, so every mirror returned 404, and `rpm -E %{rhel}` returns the literal `%{rhel}` there so nothing could be derived from it either. The installer now probes `repodata/repomd.xml` across mirrors and candidate release versions and writes an explicit `baseurl`, bypassing `$releasever` entirely. Debian/Ubuntu support was added on the same probe-first principle, and aws-cli now falls back package manager → official v2 installer → pip3.
+- `speed_test.sh` treated any output from `delete-object` as failure instead of checking the exit code, so a successful cleanup was reported as `[WARN] cleanup failed` whenever aws-cli wrote anything to stderr — which aws-cli v1 does on every `--no-verify-ssl` call. It now branches on the exit code, matching `smoke_test.sh`.
 
 - `stress_test.sh`: `key` was assigned in the same `local` statement as `c` and `idx`, so those expanded before the assignments took effect and every worker in a concurrency batch wrote to the *same* object key instead of distinct ones. Concurrency levels and object sizes in past runs were still real, and the `sigv4-proxy` OOM boundary still holds, but throughput figures from before this fix should be re-measured.
 - `smoke_test.sh`: an unguarded `cd` could continue in the wrong directory if it failed.

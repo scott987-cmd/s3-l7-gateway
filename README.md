@@ -166,6 +166,7 @@ s3.put_object(Bucket="<bucket>", Key="reports/a.txt", Body=b"hello")
 
 ## 文档
 
+- [对接阿里云 OSS](docs/aliyun-oss.zh-CN.md) — 实测通过的配置、两个反直觉结论（region 不校验 / service 必须是 s3）、Anolis 装 Docker 的坑
 - [部署与运维手册](docs/USER_GUIDE.zh-CN.md) — 十五章完整手册：架构、部署、接入、WAF、安全体系、压测、运维、排障、上线清单
 - [详细参考](docs/REFERENCE.zh-CN.md) — 目录结构、设计说明、authd 验签细节、生产加固清单、桶策略附录
 - [部署](docs/deployment.md) · [运维](docs/operations.md) · [安全与 WAF](docs/security-waf.md) · [测试](docs/testing.md)

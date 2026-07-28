@@ -68,13 +68,16 @@ else
   exit 1
 fi
 
-DEL_OUT="$("${AWS[@]}" s3api delete-object --bucket "$BUCKET" --key "$KEY" 2>&1 || true)"
-if [[ -z "$DEL_OUT" ]]; then
+# 按退出码判定,不能按"输出是否为空"判定:aws-cli v1 在 --no-verify-ssl 下
+# 会往 stderr 打 InsecureRequestWarning,那不是失败。(与 smoke_test.sh 保持一致)
+DEL_OUT="$("${AWS[@]}" s3api delete-object --bucket "$BUCKET" --key "$KEY" 2>&1)"
+DEL_RC=$?
+if [[ "$DEL_RC" -eq 0 ]]; then
   echo "  [PASS] cleanup delete-object"
 elif echo "$DEL_OUT" | grep -Eq 'AccessDenied|Access Denied|403|Forbidden'; then
   echo "  [WARN] cleanup skipped: real S3 credentials do not allow DeleteObject"
 else
-  echo "  [WARN] cleanup failed: $(echo "$DEL_OUT" | head -1)"
+  echo "  [WARN] cleanup failed (rc=$DEL_RC): $(echo "$DEL_OUT" | grep -v 'InsecureRequestWarning\|warnings.warn' | head -1)"
 fi
 
 echo "==> SUMMARY PUT=$(human_bps "$put_bps") GET=$(human_bps "$get_bps") SIZE_MB=$SIZE_MB KEY=$KEY"
