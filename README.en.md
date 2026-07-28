@@ -124,18 +124,15 @@ The cost is real and measured. On a controlled intranet test with a fixed 256-by
 
 ## Verified, and where it breaks
 
-From-zero delivery on a freshly reinstalled Alibaba Cloud Linux 4 ECS with no Docker, Compose or aws-cli present:
+From-zero delivery was completed on two freshly reinstalled hosts with no Docker, Compose, or aws-cli present:
 
-| Check | Result |
+| Environment | Result |
 |---|---|
-| Preflight | `PASS=21 WARN=0 FAIL=0` |
-| Smoke | `PASS=7 WARN=0 FAIL=0`, including a space-containing object key |
-| Public serial functionality | `PASS=10/10`: zero-byte objects, encoded keys, metadata, Range, CopyObject, multipart, and cleanup |
-| Security behavior | `PASS=23 WARN=0 FAIL=0` |
-| Repeat-deploy regression | All four containers running; restart=0, OOM=0, error logs=0, test residue=0 |
-| Quick throughput | 64 MiB PUT / GET with MD5 match |
-| Public health probe | 403 after hardening, matching the source allowlist |
-| Unknown Host | Connection closed by the nginx default server |
+| Alibaba Cloud Linux 4 + Alibaba Cloud OSS | Preflight `21/0/0`; smoke `7/0/0`; public serial functionality `10/10`; security behavior `23/0/0` |
+| CentOS Stream 9 + Volcengine TOS | Preflight `20/1/0` on the already-running node; smoke `7/0/0`; public serial functionality `10/10`; security behavior `23/0/0` |
+| Shared regression checks | Repeat deployment succeeded; all four containers running; restart=0, OOM=0, error logs=0, invalid audit JSON=0, test residue=0 |
+| Public boundary | Public health probe returned 403 after hardening; unknown Host was closed by the nginx default server |
+| Quick throughput | Alibaba Cloud: 64 MiB PUT / GET with MD5 match. Volcengine: no performance test was run in this validation, as requested |
 
 Latest capacity validation on 4 vCPU / 7.3 GiB with `SIGV4_PROXY_MEM_LIMIT=4g`:
 

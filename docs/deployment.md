@@ -113,9 +113,12 @@ Generate a clean customer package:
 
 The package excludes `.git`, `.env`, real credentials, virtual keys, generated certs, logs, support bundles, and backup files.
 
-## Verified clean-host flow
+## Verified clean-host flows
 
-The following flow was verified on a reinstalled Alibaba Cloud Linux 4 ECS that initially had no Docker, no Compose, and no aws-cli:
+The same package has been verified from zero against both Alibaba Cloud OSS
+and Volcengine TOS. The following example is the 2026-07-29 Volcengine run on
+a reinstalled CentOS Stream 9 ECS that initially had no Docker, Compose, or
+aws-cli:
 
 ```bash
 sudo bash scripts/init_host.sh
@@ -129,7 +132,7 @@ export S3_SECRET_KEY=<real-sk>
   S3_BUCKET_HOST=private-proxy.tos-s3-cn-beijing.ivolces.com \
   TEST_BUCKET=private-proxy \
   GW_BIND_ADDR=0.0.0.0 \
-  GW_LISTEN_PORT=443 \
+  GW_LISTEN_PORT=8443 \
   TEST_KEY=s3gw-clean-acceptance.txt \
   TEST_REQUIRE_DELETE=0
 ```
@@ -144,3 +147,8 @@ health passed
 smoke PASS=7 WARN=0 FAIL=0
 acceptance passed
 ```
+
+The public-IP serial functional suite then passed `10/10`, the security suite
+passed `23/0/0`, and repeat deployment finished with zero container restarts,
+OOM events, error-log matches, invalid audit JSON records, or test-object
+residue. No performance test was run in this Volcengine validation.

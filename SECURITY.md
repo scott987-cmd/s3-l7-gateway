@@ -44,7 +44,7 @@ LINES=500 ./scripts/ops.sh audit                       # 1. attribute the leaked
 ./scripts/keyctl.sh disable AKxxxxx --reload           # 2. seconds-level disable, others unaffected
                                                        # 3. confirm old credential now returns 403
 ./scripts/keyctl.sh add --owner team-a --reload        # 4. re-issue for that application
-./scripts/ops.sh bundle                                # 5. capture evidence
+./scripts/ops.sh bundle                                # 5. capture a 0600, non-interpolated evidence bundle
 ```
 
 A leaked **real** upstream credential is a different class of event and is exactly what this design exists to prevent: real credentials never leave the gateway runtime, are never sent to clients, and never appear in WAF or audit logs.

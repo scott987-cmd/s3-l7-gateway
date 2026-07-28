@@ -34,21 +34,29 @@ USAGE
 
 cmd="${1:-}"; shift || true
 LINES="${LINES:-120}"
+[[ "$LINES" =~ ^[1-9][0-9]*$ ]] || { echo "LINES must be a positive integer"; exit 2; }
 
 case "$cmd" in
   health)
     set -a; [[ -f .env ]] && . ./.env; set +a
     port="${GW_LISTEN_PORT:-8443}"
+    failed=0
     echo "gateway health:"
-    curl -sk -o /dev/null -w "  https://127.0.0.1:${port}/healthz -> %{http_code} (%{time_total}s)\n" "https://127.0.0.1:${port}/healthz" || true
+    health_result="$(curl -sk -o /dev/null -w '%{http_code} %{time_total}' "https://127.0.0.1:${port}/healthz" 2>/dev/null || true)"
+    read -r health_code health_time <<<"${health_result:-000 0}"
+    echo "  https://127.0.0.1:${port}/healthz -> ${health_code:-000} (${health_time:-0}s)"
+    [[ "$health_code" == "200" ]] || failed=1
     echo "component health:"
-    $DC exec -T authd /authd -health && echo "  authd ok" || echo "  authd failed"
-    $DC exec -T creds /creds -health -listen=127.0.0.1:8181 && echo "  creds ok" || echo "  creds failed"
+    if $DC exec -T authd /authd -health; then echo "  authd ok"; else echo "  authd failed"; failed=1; fi
+    if $DC exec -T creds /creds -health -listen=127.0.0.1:8181; then echo "  creds ok"; else echo "  creds failed"; failed=1; fi
+    [[ "$failed" -eq 0 ]]
     ;;
   status)
+    set -a; [[ -f .env ]] && . ./.env; set +a
+    port="${GW_LISTEN_PORT:-8443}"
     $DC ps
     echo ""
-    ss -tlnp 2>/dev/null | grep -E ':(443|8443)\b' || true
+    ss -tlnp 2>/dev/null | grep -E ":${port}\\b" || true
     ;;
   logs)
     $DC logs --tail="$LINES" authd creds sigv4-proxy nginx
@@ -72,6 +80,7 @@ case "$cmd" in
     LINES=20 "$0" audit
     ;;
   bundle)
+    umask 077
     ts="$(date +%Y%m%d-%H%M%S)"
     out="support/s3gw-support-${ts}"
     mkdir -p "$out"
@@ -83,7 +92,9 @@ case "$cmd" in
       docker --version || true
       docker compose version || docker-compose version || true
     } >"$out/host.txt" 2>&1
-    $DC config >"$out/compose.config.yml" 2>&1 || true
+    # Never render .env values into a support artifact. This keeps all
+    # Compose variables as placeholders, including future credential fields.
+    $DC config --no-interpolate >"$out/compose.config.yml" 2>&1 || true
     $DC ps >"$out/compose.ps.txt" 2>&1 || true
     $DC logs --tail=500 authd creds sigv4-proxy nginx >"$out/compose.logs.txt" 2>&1 || true
     $DC exec -T nginx sh -c 'tail -n 500 /var/log/nginx/s3audit.log' >"$out/s3audit.tail.jsonl" 2>&1 || true
@@ -91,7 +102,16 @@ case "$cmd" in
     ss -tlnp >"$out/listeners.txt" 2>&1 || true
     df -h >"$out/df.txt" 2>&1 || true
     free -h >"$out/free.txt" 2>&1 || true
+    set -a; [[ -f .env ]] && . ./.env; set +a
+    for secret_name in S3_ACCESS_KEY S3_SECRET_KEY S3_SESSION_TOKEN VOLC_ACCESS_KEY VOLC_SECRET_KEY TEST_VIRT_SK; do
+      secret_value="${!secret_name:-}"
+      if [[ -n "$secret_value" ]] && printf '%s\n' "$secret_value" | grep -RFl -f - "$out" >/dev/null; then
+        echo "refusing to archive: support data contains $secret_name" >&2
+        exit 1
+      fi
+    done
     tar -C support -czf "${out}.tgz" "$(basename "$out")"
+    chmod 600 "${out}.tgz"
     echo "support bundle: ${out}.tgz"
     ;;
   -h|--help|help|"")

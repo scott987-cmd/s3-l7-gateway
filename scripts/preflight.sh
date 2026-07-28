@@ -59,6 +59,15 @@ case "$S3_CREDS_SOURCE" in
     ;;
 esac
 
+endpoint_host_valid=1
+for host_var in S3_ENDPOINT_HOST S3_BUCKET_HOST; do
+  host_value="${!host_var:-}"
+  if [[ ! "$host_value" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+    fail "$host_var must be a hostname or IPv4 address without scheme, port, or path"
+    [[ "$host_var" == "S3_ENDPOINT_HOST" ]] && endpoint_host_valid=0
+  fi
+done
+
 if [[ -s auth/keys.json ]] && jq empty auth/keys.json >/dev/null 2>&1; then
   key_count="$(jq 'length' auth/keys.json)"
   if [[ "$key_count" -gt 0 ]]; then pass "auth/keys.json has $key_count virtual key(s)"; else warn "auth/keys.json is empty; deploy.sh will generate one"; fi
@@ -78,9 +87,11 @@ if docker info >/dev/null 2>&1; then pass "docker daemon reachable"; else fail "
 if [[ -n "${dc:-}" ]] && $dc config --services >/dev/null; then pass "compose config parses"; else fail "compose config failed"; fi
 
 title "network"
-if getent hosts "$S3_ENDPOINT_HOST" >/tmp/s3gw_preflight_hosts 2>/dev/null; then
+if [[ "$endpoint_host_valid" -eq 0 ]]; then
+  fail "skip S3 endpoint DNS/TCP checks because the endpoint host is invalid"
+elif hosts="$(getent hosts "$S3_ENDPOINT_HOST" 2>/dev/null)"; then
   pass "S3_ENDPOINT_HOST resolves: $S3_ENDPOINT_HOST"
-  first_ip="$(awk 'NR==1{print $1}' /tmp/s3gw_preflight_hosts)"
+  first_ip="$(awk 'NR==1{print $1}' <<<"$hosts")"
   case "$first_ip" in
     10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|100.64.*|100.6[5-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*)
       pass "S3 endpoint appears private/internal: $first_ip"
@@ -93,16 +104,18 @@ else
   fail "cannot resolve S3_ENDPOINT_HOST=$S3_ENDPOINT_HOST"
 fi
 
-if timeout 5 bash -c "</dev/tcp/${S3_ENDPOINT_HOST}/443" 2>/dev/null; then
+if [[ "$endpoint_host_valid" -eq 1 ]] && timeout 5 bash -c 'exec 3<>"/dev/tcp/$1/443"' _ "$S3_ENDPOINT_HOST" 2>/dev/null; then
   pass "S3 endpoint TCP 443 reachable"
-else
+elif [[ "$endpoint_host_valid" -eq 1 ]]; then
   fail "S3 endpoint TCP 443 unreachable"
 fi
 
 title "ports"
 bind="${GW_BIND_ADDR:-127.0.0.1}"
 port="${GW_LISTEN_PORT:-8443}"
-if ss -tlnp 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"; then
+if [[ ! "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+  fail "GW_LISTEN_PORT must be an integer between 1 and 65535"
+elif ss -tlnp 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"; then
   if [[ "${ALLOW_PORT_IN_USE:-0}" == "1" ]]; then warn "port $port is already listening; ALLOW_PORT_IN_USE=1"; else fail "port $port is already listening"; fi
 else
   pass "port $port is free"

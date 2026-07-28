@@ -179,6 +179,8 @@ WAF 可以终止客户端 TLS，但推荐 WAF 到网关仍使用 HTTPS 443。TLS
 ./scripts/ops.sh bundle      # 生成 support/*.tgz 支持包
 ```
 
+`bundle` 不复制 `.env`，Compose 配置通过 `--no-interpolate` 保留变量占位符；压缩前还会扫描当前真实 AK/SK、session token、STS 凭据和虚拟 SK，命中即拒绝生成归档。输出目录为 `0700`、压缩包为 `0600`。日志和审计仍可能包含对象路径、虚拟 AK 标识及内部主机信息，对外发送前必须复核。
+
 虚拟 AK/SK 生命周期：
 
 ```bash

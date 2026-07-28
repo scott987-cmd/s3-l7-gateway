@@ -488,7 +488,7 @@ CONCURRENCY_LIST="1 2 4 8 16 32" \
 | `./scripts/ops.sh audit` | 查看 nginx JSON 审计日志。 |
 | `./scripts/ops.sh reload` | 发送 SIGHUP，热加载虚拟密钥库。 |
 | `./scripts/ops.sh doctor` | 汇总健康、状态、日志和审计信息。 |
-| `./scripts/ops.sh bundle` | 生成不包含 `.env` 的支持包。 |
+| `./scripts/ops.sh bundle` | 生成不包含 `.env`、Compose 变量保持未展开占位符的支持包。 |
 
 ### 9.2 建议监控项
 
@@ -503,7 +503,7 @@ CONCURRENCY_LIST="1 2 4 8 16 32" \
 ./scripts/ops.sh bundle
 ```
 
-支持包包含 compose 配置、服务状态、服务日志、审计尾部、监听端口、连接摘要、内存、磁盘和主机信息，不包含 `.env`。发送前仍应检查客户内部日志与主机信息的合规要求。
+支持包包含 compose 配置、服务状态、服务日志、审计尾部、监听端口、连接摘要、内存、磁盘和主机信息，不包含 `.env`；Compose 配置使用未展开占位符。压缩前还会扫描当前真实 AK/SK、session token、STS 凭据和虚拟 SK，命中任何一项都会拒绝生成归档。支持目录权限为 `0700`，压缩包为 `0600`。审计和服务日志仍可能包含对象路径、虚拟 AK 标识、主机名和内部拓扑，发送前必须按客户合规要求复核。
 
 ## 十、故障排查
 

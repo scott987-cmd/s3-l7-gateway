@@ -185,14 +185,14 @@ chmod 600 .env
 
 mkdir -p auth
 if [[ ! -s auth/keys.json ]] || [[ "$(cat auth/keys.json 2>/dev/null || true)" == "{}" ]]; then
-  ./scripts/gen_keys.sh >/tmp/s3gw-configure-key.out
-  ak="$(awk -F= '/AWS_ACCESS_KEY_ID/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' /tmp/s3gw-configure-key.out)"
-  sk="$(awk -F= '/AWS_SECRET_ACCESS_KEY/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' /tmp/s3gw-configure-key.out)"
+  key_output="$(./scripts/gen_keys.sh)"
+  ak="$(awk -F= '/AWS_ACCESS_KEY_ID/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' <<<"$key_output")"
+  sk="$(awk -F= '/AWS_SECRET_ACCESS_KEY/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' <<<"$key_output")"
+  unset key_output
   {
     write_kv TEST_VIRT_AK "$ak"
     write_kv TEST_VIRT_SK "$sk"
   } >> .env
-  rm -f /tmp/s3gw-configure-key.out
 else
   virt_ak="$(getv TEST_VIRT_AK)"
   virt_sk="$(getv TEST_VIRT_SK)"

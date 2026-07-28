@@ -275,7 +275,7 @@ footer{border-top:1px solid var(--line);padding:38px 0 54px;color:var(--fg-faint
   <div class="wrap hero-in">
     <div class="eyebrow">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
-      2026-07-28 生产候选验收 · 公网功能 17 / 17
+      2026-07-29 双云生产候选验收 · 功能 17 / 17
     </div>
     <h1>调用方用标准 S3 SDK，<span class="grad">但拿不到真实凭证</span></h1>
     <p class="lede">
@@ -310,14 +310,14 @@ footer{border-top:1px solid var(--line);padding:38px 0 54px;color:var(--fg-faint
 <section id="acceptance">
   <div class="wrap">
     <div class="sec-head">
-      <div class="sec-label">生产候选验收 · 2026-07-28</div>
+      <div class="sec-label">生产候选验收 · 更新于 2026-07-29</div>
       <h2>功能链路已经就绪，正式切流须完成生产基础设施门禁</h2>
-      <p>在重装后的 Alibaba Cloud Linux 4 ECS 上，网关以 <code class="inl">0.0.0.0:8443</code> 提供 HTTPS，经公网地址完成串行功能验收。以下数字是可复现的脚本结果，不包含本轮性能测试。</p>
+      <p>已在重装后的 Alibaba Cloud Linux 4 + OSS、CentOS Stream 9 + Volcengine TOS 两套环境完成从零部署和公网地址串行功能验收。以下数字是可复现的脚本结果；火山环境本轮未执行性能测试。</p>
     </div>
 
     <div class="stats four" style="margin-bottom:18px">
       <div class="stat good">
-        <div class="sl">公网功能</div>
+        <div class="sl">功能验收</div>
         <div class="sv">17 / 17</div>
         <div class="sd">标准冒烟 7 项 + 扩展功能 10 项，全部通过</div>
       </div>
@@ -696,7 +696,7 @@ export S3_SECRET_KEY=...
         <div class="fi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
         <div class="fn">STEP 04</div>
         <h3>日常运维</h3>
-        <p>健康、状态、日志、审计、密钥热加载、汇总诊断与支持包。</p>
+        <p>健康失败会返回非零；支持包不含 .env、凭据变量不展开，压缩前再扫描已知密钥，归档权限为 0600。</p>
         <code>./scripts/ops.sh health|status
 ./scripts/ops.sh logs|audit
 ./scripts/ops.sh doctor|bundle</code>
@@ -844,7 +844,7 @@ LINES=500 ./scripts/ops.sh audit
               <tr><td>64 MiB × 1–16</td><td><span class="badge g">PUT / GET 全部成功</span></td></tr>
               <tr><td>64 MiB × 32</td><td><span class="badge r">31/32 PUT；proxy OOM × 2</span></td></tr>
               <tr><td>安全行为验收</td><td><span class="badge g">23 / 0 / 0</span></td></tr>
-              <tr><td>公网串行功能</td><td><span class="badge g">17 / 17；测试残留 0</span></td></tr>
+              <tr><td>公网串行功能</td><td><span class="badge g">10 / 10；测试残留 0</span></td></tr>
             </tbody>
           </table>
         </div>
@@ -936,7 +936,7 @@ LINES=500 ./scripts/ops.sh audit
 
 <footer>
   <div class="wrap foot-in">
-    <div>更新于 2026-07-28 · Apache-2.0 · 性能与容量数据为受控测试参考，非生产 SLA</div>
+    <div>更新于 2026-07-29 · Apache-2.0 · 性能与容量数据为受控测试参考，非生产 SLA</div>
     <div class="foot-links">
       <a href="https://github.com/scott987-cmd/s3-l7-gateway">GitHub</a>
       <a href="https://github.com/scott987-cmd/s3-l7-gateway/blob/main/README.md">中文 README</a>

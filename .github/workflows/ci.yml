@@ -69,6 +69,16 @@ jobs:
             test -x "$f" || { echo "not executable: $f"; exit 1; }
           done
 
+      - name: Health command fails closed
+        run: |
+          cp .env.example .env
+          if ./scripts/ops.sh health >/tmp/ops-health.out 2>&1; then
+            echo "ops.sh health must fail when no gateway/components are running"
+            cat /tmp/ops-health.out
+            exit 1
+          fi
+          grep -q 'authd failed' /tmp/ops-health.out
+
   compose:
     name: Compose config is valid
     runs-on: ubuntu-latest
@@ -96,6 +106,26 @@ jobs:
             echo "expected only nginx to publish a host port"
             exit 1
           fi
+
+      - name: Support bundle keeps credentials unexpanded
+        run: |
+          cp .env.example .env
+          sed -i -e 's|^S3_REGION=.*|S3_REGION=us-east-1|' \
+                 -e 's|^S3_ENDPOINT_HOST=.*|S3_ENDPOINT_HOST=s3.example.com|' \
+                 -e 's|^S3_BUCKET_HOST=.*|S3_BUCKET_HOST=bucket.s3.example.com|' \
+                 -e 's|^S3_ACCESS_KEY=.*|S3_ACCESS_KEY=ci-access-marker|' \
+                 -e 's|^S3_SECRET_KEY=.*|S3_SECRET_KEY=ci-secret-marker|' .env
+          bundle="$(./scripts/ops.sh bundle | sed -n 's/^support bundle: //p')"
+          test -f "$bundle"
+          extracted="$(mktemp -d)"
+          tar -xzf "$bundle" -C "$extracted"
+          if grep -Rqs 'ci-access-marker\|ci-secret-marker' "$extracted"; then
+            echo "support bundle leaked interpolated credentials"
+            exit 1
+          fi
+          grep -Rq '${S3_ACCESS_KEY:-}' "$extracted"
+          test "$(stat -c %a "$bundle")" = 600
+          test "$(stat -c %a "${bundle%.tgz}")" = 700
 
   secrets:
     name: No credentials in the tree
