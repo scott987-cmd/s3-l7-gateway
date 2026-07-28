@@ -85,6 +85,16 @@ if [[ ! -f creds/ca-certificates.crt ]]; then
 fi
 [[ -f creds/ca-certificates.crt ]] || { echo "[deploy] 缺少 creds/ca-certificates.crt"; exit 1; }
 
+SIGV4_PROXY_ARCHIVE="images/s3gw-sigv4-proxy-s3-compat-v2-linux-amd64.tar.gz"
+if [[ -f "$SIGV4_PROXY_ARCHIVE" ]]; then
+  echo "[deploy] 加载 S3 兼容修复版 sigv4-proxy 镜像..."
+  gzip -dc "$SIGV4_PROXY_ARCHIVE" | docker load >/dev/null
+fi
+if ! docker image inspect s3gw-sigv4-proxy:s3-compat-v2 >/dev/null 2>&1; then
+  echo "[deploy] 缺少 s3gw-sigv4-proxy:s3-compat-v2 镜像及其归档: $SIGV4_PROXY_ARCHIVE"
+  exit 1
+fi
+
 echo "[deploy] 构建 authd/creds(Go 静态二进制 -> scratch 镜像)..."
 "${DC[@]}" build authd creds
 
@@ -92,14 +102,21 @@ echo "[deploy] 构建 authd/creds(Go 静态二进制 -> scratch 镜像)..."
 # Docker 会用镜像里的目录内容(root:root)填充【空】卷,把预先 chown 冲掉,导致非 root
 # nginx 无法写 s3audit.log 首启即 crash。对策:先把卷【播种】成非空且属主 101——
 # 卷非空时 Docker 不再从镜像拷贝,101 属主得以保留。
-NGINX_LOG_VOL="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}_nginx-logs"
-docker volume create "$NGINX_LOG_VOL" >/dev/null 2>&1 || true
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
+NGINX_LOG_VOL="${COMPOSE_PROJECT}_nginx-logs"
+docker volume create \
+  --label "com.docker.compose.project=$COMPOSE_PROJECT" \
+  --label "com.docker.compose.volume=nginx-logs" \
+  "$NGINX_LOG_VOL" >/dev/null 2>&1 || true
 docker run --rm -u 0 -v "$NGINX_LOG_VOL":/var/log/nginx alpine:3.20 \
   sh -c 'touch /var/log/nginx/s3audit.log && chown -R 101:101 /var/log/nginx' >/dev/null 2>&1 || \
   echo "[deploy] 警告: 无法初始化 nginx-logs 卷属主为 101:101,nginx(非root)可能无法写审计日志。"
 
 echo "[deploy] 拉起服务(缺失的外部镜像会自动拉取)..."
-"${DC[@]}" up -d
+# authd/creds may receive new container IPs when their images are rebuilt.
+# Nginx resolves Compose service names at startup, so keeping an old Nginx
+# container can leave it pointing at stale backend IPs after a repeat deploy.
+"${DC[@]}" up -d --force-recreate
 
 echo "[deploy] 当前状态:"
 "${DC[@]}" ps

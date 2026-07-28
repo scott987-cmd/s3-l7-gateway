@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `scripts/public_functional_test.sh`: serial, non-performance coverage through an explicitly supplied public endpoint, including zero-byte objects, encoded keys, metadata, Range GET, CopyObject, multipart transfer, listing, and residue cleanup.
+
+- `scripts/verify_security.sh`: repeatable post-deployment security verification for signature rejection, upstream isolation, bucket routing, write replay protection, virtual-key revocation and recovery, credential leakage, audit attribution, and runtime container hardening.
+
 - `docs/aliyun-oss.zh-CN.md`: a verified Alibaba Cloud OSS deployment guide, recording that OSS accepts AWS SigV4, that it does not validate the region string but does require service `s3`, the internal-versus-public endpoint distinction, and the full measured result of a from-zero deployment.
 
 - Public repository scaffolding: Chinese-default README with an English version, `DISCLAIMER.md`, `SECURITY.md`, `CONTRIBUTING.md`, this changelog, and a published documentation site under `docs/`.
@@ -13,6 +17,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Documentation site including an L4-versus-L7 comparison backed by the measured small-object numbers, so the trade-off can be read rather than argued.
 
 ### Fixed
+
+- **A repeat deployment could recreate backend containers while leaving Nginx running with stale resolved container IPs.** `deploy.sh` now force-recreates the full Compose group after builds, ensuring Nginx resolves the current authd and proxy addresses.
+
+- **The upstream signing proxy omitted `Content-Length: 0` for empty PUT requests and signed before copying `x-amz-*` business headers.** Aliyun OSS consequently rejected zero-byte objects with `MissingContentLength` and metadata writes with `SignatureDoesNotMatch`. The delivery now loads an audited Linux/amd64 compatibility image based on upstream commit `9e83e1b5d2372d5ced60a85b912906e3a34502a2`; patch provenance and binary/archive hashes are recorded in `patches/aws-sigv4-proxy-s3-compat.patch`.
+
+- **Delivery archives built on macOS emitted `LIBARCHIVE.xattr.com.apple.provenance` warnings when extracted on Linux.** The packager now suppresses macOS extended attributes and Apple metadata while creating the tarball.
+
+- **Fresh deployments could produce a Compose ownership warning for the pre-seeded Nginx log volume.** `deploy.sh` intentionally creates the volume before Compose so UID 101 can own the audit log, but it did not attach Compose's project and volume labels. Newly seeded volumes now carry those labels and are recognized by current Compose versions.
+
+- **`verify_security.sh` could warn that audit attribution was missing even when matching records existed.** With `pipefail` enabled, `grep -q` closed the `docker compose exec` pipeline as soon as it found a match; the producer then received SIGPIPE and made the whole condition false. Log and header checks now match captured input directly, avoiding false negatives on larger audit logs.
+
+- **Object keys containing spaces reached `sigv4-proxy` with an invalid request target.** The path-style bucket stripping map used Nginx `$uri`, which decodes `%20` into a literal space before proxying; authentication succeeded but the re-signing proxy returned 400. Routing now derives the upstream path from the raw `$request_uri` while keeping the query separate, and the smoke test includes a space-containing object key regression.
+
+- **`stress_test.sh` could report a successful process exit despite failed operations.** Per-step failures were written to the TSV but never affected the final exit status, the Docker stats filter still matched the old `s3gw-deploy` project name rather than current `s3gw-*` containers, and a large error report could exit early with SIGPIPE before the summary. It now exits non-zero when any worker fails, safely truncates error output, and includes the active gateway containers in resource snapshots.
 
 - **`init_host.sh` wrote a fixed list of registry mirrors, two of which were unreachable.** Mirror reachability varies by network; Docker tries them in order and stalls on each dead one, which shows up as `docker pull` hanging with no output. Measured on the test ECS: `docker.mirrors.ustc.edu.cn` and `mirror.ccs.tencentyun.com` both timed out while only `docker.m.daocloud.io` answered. The installer now probes each candidate and writes only the ones that respond — and writes nothing at all when none do, which is the right outcome outside China.
 
@@ -33,6 +51,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Example bucket names and key owners in `.env.example`, `auth/authd_test.go` and the reference document are generic placeholders.
 
 ### Notes
+
+The clean Alibaba Cloud Linux 4 acceptance run completed with preflight `21/0/0`, smoke `7/0/0`, and security verification `23/0/0`. With 64 MiB objects and a 4 GiB proxy limit, concurrency 1–16 passed; concurrency 32 produced 31/32 successful PUTs and two memcg OOM restarts, establishing the current single-instance failure boundary.
 
 Prebuilt Linux amd64 runtime binaries are deliberately **not** tracked in git — they are build artifacts, already listed in `.gitignore`. `deploy.sh` builds them with Go when they are missing, and `scripts/package.sh` produces delivery archives that include them for hosts without Go.
 

@@ -70,7 +70,7 @@ configure passed
 preflight PASS=21 WARN=0 FAIL=0
 deploy passed
 health passed
-smoke PASS=5 WARN=1 FAIL=0
+smoke PASS=6 WARN=1 FAIL=0
 acceptance passed
 ```
 
@@ -136,27 +136,33 @@ s3.put_object(Bucket="<bucket>", Key="reports/a.txt", Body=b"hello")
 
 ## 已验证与容量边界
 
-在重装后的 CentOS Stream 9 ECS 上从零完成交付验证（初始无 Docker / Compose / aws-cli）：
+在重装后的 Alibaba Cloud Linux 4 ECS 上从零完成交付验证（初始无 Docker / Compose / aws-cli）：
 
 | 验证项 | 结果 |
 |---|---|
 | 预检 | `PASS=21 WARN=0 FAIL=0` |
-| 冒烟 | `PASS=5 WARN=1 FAIL=0`（WARN 来自 DeleteObject 权限不足） |
-| 快速吞吐 | 8 MiB PUT / GET / MD5 校验通过 |
+| 冒烟 | `PASS=7 WARN=0 FAIL=0`（含空格对象键） |
+| 公网串行功能 | `PASS=10/10`；空对象、特殊对象键、Metadata、Range、CopyObject、Multipart、清理均通过 |
+| 安全行为 | `PASS=23 WARN=0 FAIL=0` |
+| 重复部署回归 | 四个容器全部运行，restart=0、OOM=0、错误日志=0、测试对象残留=0 |
+| 快速吞吐 | 64 MiB PUT / GET / MD5 校验通过 |
 | 公网健康检查 | 加固后返回 403，符合来源白名单预期 |
 | 未知 Host | 由 nginx 默认 server 关闭连接 |
 
-容量边界（2 vCPU / 7.4 GiB ECS）：
+最新容量验证（4 vCPU / 7.3 GiB ECS，`SIGV4_PROXY_MEM_LIMIT=4g`）：
 
 | 场景 | 结果 |
 |---|---|
-| 64 MiB 对象，并发 32 | 成功 |
-| 256 MiB 对象，并发 4 / 8 | 成功 |
-| 256 MiB 对象，并发 16 | `sigv4-proxy` OOM |
+| 64 MiB 对象，并发 1 / 2 / 4 / 8 / 16 | PUT / GET 全部成功；并发 16 为 146.29 / 113.78 MiB/s |
+| 64 MiB 对象，并发 32 | PUT 31/32 成功；`sigv4-proxy` 在 4 GiB 限额下 OOM 重启 2 次 |
+| 256 MiB 对象，并发 4 / 8（历史 2 vCPU 实测） | 成功 |
+| 256 MiB 对象，并发 16（历史 2 vCPU 实测） | `sigv4-proxy` OOM |
 
-> **关于以上容量数字的一个说明。** 这些数据由 `stress_test.sh` 在一处已修复的缺陷之前跑出：当时同一并发批次内的所有 worker 因变量展开时机问题落到了**同一个 object key** 上，而不是各自独立的对象。并发数与对象大小是真实的，`sigv4-proxy` 在 256 MiB × 16 下触发 OOM 的结论也仍然成立（内存压力来自并发大对象流本身）；但吞吐类数字建议用修复后的工具在你自己的环境重新测量。
+最新 64 MiB 数据使用修复后的独立对象键和失败退出码工具测得。默认阶梯压测止于并发 16；更高的大对象并发应视为容量探索，并通过扩容或业务侧限并发处理。
 
 `SIGV4_PROXY_MEM_LIMIT=4g` 限制单容器故障半径，但没有消除大对象高并发的内存特征。**生产参数必须以你自己的对象大小、并发和主机规格重新压测。**
+
+当前结论是**功能生产候选通过**。公网 IP + 自签证书只用于受控验收；正式切流前必须换成受信任域名证书、前置 WAF/CLB、收敛安全组和健康检查来源、确认签名语义不被改写，并接入重启/OOM/5xx/证书到期监控。完整门禁见[在线文档的上线状态](https://scott987-cmd.github.io/s3-l7-gateway/#acceptance)。
 
 ## 当前不支持
 

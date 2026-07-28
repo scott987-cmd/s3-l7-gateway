@@ -115,7 +115,7 @@ The package excludes `.git`, `.env`, real credentials, virtual keys, generated c
 
 ## Verified clean-host flow
 
-The following flow was verified on a reinstalled CentOS Stream 9 ECS that initially had no Docker, no Compose, and no aws-cli:
+The following flow was verified on a reinstalled Alibaba Cloud Linux 4 ECS that initially had no Docker, no Compose, and no aws-cli:
 
 ```bash
 sudo bash scripts/init_host.sh
@@ -141,6 +141,6 @@ configure passed
 preflight PASS=21 WARN=0 FAIL=0
 deploy passed
 health passed
-smoke PASS=5 WARN=1 FAIL=0
+smoke PASS=7 WARN=0 FAIL=0
 acceptance passed
 ```

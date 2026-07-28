@@ -19,15 +19,17 @@ upstream authd_backend {
 }
 
 # path-style(客户端) → virtual-hosted(上游) 的路径改写。
+# 必须基于保留 percent-encoding 的 $request_uri，而不是已解码的 $uri；
+# 否则对象键中的 %20 会变成裸空格，sigv4-proxy 会对非法请求目标返回 400。
 # 客户端必须使用 path-style,因此 /<单段> 一定是 bucket,不是对象。
 #   /bucket            → /        桶级操作(ListObjectsV2 / HeadBucket / ?location / ?uploads)
 #   /bucket/a/b.txt    → /a/b.txt 对象操作
 # 第一条规则不可省略:缺了它,不带尾斜杠的桶级请求会落到 default,
 # 被上游当成名为 <bucket> 的对象,返回 NoSuchKey / 404。
-map $uri $s3_upstream_uri {
+map $request_uri $s3_upstream_uri {
     default $uri;
-    ~^/[^/]+$                    /;
-    ~^/[^/]+(?<object_path>/.*)$ $object_path;
+    ~^/[^/?]+(?:\?.*)?$                              /;
+    ~^/[^/?]+(?<object_path>/[^?]*)(?:\?.*)?$         $object_path;
 }
 
 server {

@@ -55,6 +55,7 @@ s3gw/
     ├── acceptance.sh         # 一键验收：preflight + deploy + health + smoke
     ├── ops.sh                # 长期运维：health/status/log/audit/reload/bundle
     ├── smoke_test.sh         # 端到端冒烟：标准 S3 客户端 + 虚拟 AK/SK 跑 PUT/GET/HEAD
+    ├── verify_security.sh    # 安全行为验收：拦截/重放/吊销/泄露/审计/容器加固
     ├── speed_test.sh         # 单对象吞吐压测：PUT/GET/MD5
     ├── stress_test.sh        # 阶梯并发压测：local/CLB、PUT/GET、错误收集
     ├── package.sh            # 生成干净交付包
@@ -114,10 +115,13 @@ sudo bash scripts/init_host.sh
 # 2) 一键部署并完成基础验收
 ./scripts/acceptance.sh
 
-# 3) 快速吞吐验证
+# 3) 安全行为验收（使用专用 TEST_VIRT_AK）
+./scripts/verify_security.sh
+
+# 4) 快速吞吐验证
 SIZE_MB=64 ./scripts/speed_test.sh
 
-# 4) 阶梯压测到平台期/失败边界
+# 5) 阶梯压测到平台期/失败边界
 SIZE_MB=64 CONCURRENCY_LIST="1 2 4 8 16 32" ./scripts/stress_test.sh
 ```
 
@@ -200,7 +204,7 @@ WAF 可以终止客户端 TLS，但推荐 WAF 到网关仍使用 HTTPS 443。TLS
 
 ## 当前从零交付验证结果
 
-在一台重装后的 CentOS Stream 9 ECS 上完成过从零验证：机器初始无 Docker、Compose、aws-cli。执行 `scripts/init_host.sh` 后完成依赖初始化，再通过参数化 `acceptance.sh` 完成配置、部署、健康检查和冒烟。
+在一台重装后的 Alibaba Cloud Linux 4 ECS 上完成从零验证：机器初始无 Docker、Compose、aws-cli。执行 `scripts/init_host.sh` 后完成依赖初始化，再通过参数化 `acceptance.sh` 完成配置、部署、健康检查和冒烟。
 
 验证命令形态：
 
@@ -226,7 +230,7 @@ configure passed
 preflight PASS=21 WARN=0 FAIL=0
 deploy passed
 health passed
-smoke PASS=5 WARN=1 FAIL=0
+smoke PASS=7 WARN=0 FAIL=0
 acceptance passed
 ```
 
@@ -235,11 +239,13 @@ acceptance passed
 ```text
 authd healthy
 creds healthy
-nginx healthy, 0.0.0.0:443->8443
+nginx healthy, 0.0.0.0:8443->8443
 sigv4-proxy running
 ```
 
-`WARN` 来自真实上游凭证没有 `DeleteObject` 权限，已在脚本中作为可选清理项处理。8MB `speed_test.sh` 已验证 PUT/GET/MD5 通过。安全加固后，公网 CLB `https://124.174.66.113/healthz` 返回 403，这是 `HEALTH_ALLOW_DIRECTIVES` 阻止公网探活的预期结果；经 CLB 的签名 PUT/GET 仍验证成功。
+2026-07-28 的最终回归结果：预检 `21/0/0`，冒烟 `7/0/0`，公网串行功能 `10/10`，安全行为 `23/0/0`。公网功能覆盖空对象、中文/空格/百分号对象键、Metadata、Range、CopyObject、Multipart 和清理；重复执行一键部署后再次全部通过。最终四个容器 restart=0、OOM=0、错误日志=0，测试对象残留=0。公网 `/healthz` 返回 403，未知 Host 直接关闭连接，均符合入口策略。
+
+同一台 4 vCPU / 7.3 GiB 主机的既有容量验证中，64 MiB 对象并发 1–16 的 PUT/GET 全部成功；并发 32 时 31/32 个 PUT 成功且 4 GiB proxy 发生两次 memcg OOM。默认阶梯因此止于 16，更高并发需限流或横向扩容。本轮公网功能回归按要求没有执行性能测试。
 
 客户端（任意标准 S3 SDK）配置示例——零代码改造：
 

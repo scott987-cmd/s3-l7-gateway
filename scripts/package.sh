@@ -43,5 +43,9 @@ if [[ -z "$ca_src" ]]; then
 fi
 cp "$ca_src" "$tmp/s3gw/creds/ca-certificates.crt"
 
-tar -C "$tmp" -czf "$out_dir/$pkg_name" s3gw
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$tmp" -czf "$out_dir/$pkg_name" s3gw
+else
+  tar -C "$tmp" -czf "$out_dir/$pkg_name" s3gw
+fi
 echo "$out_dir/$pkg_name"

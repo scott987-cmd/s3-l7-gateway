@@ -1,0 +1,6 @@
+services:
+  # Patched from awslabs/aws-sigv4-proxy commit
+  # 9e83e1b5d2372d5ced60a85b912906e3a34502a2:
+  # preserve Content-Length: 0 and sign copied x-amz-* business headers.
+  sigv4-proxy:
+    image: s3gw-sigv4-proxy:s3-compat-v2
