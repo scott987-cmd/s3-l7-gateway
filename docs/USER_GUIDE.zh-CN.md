@@ -66,7 +66,7 @@ flowchart LR
 
 | 项目 | 要求 |
 |---|---|
-| 操作系统 | 已验证 CentOS Stream 9；初始化脚本面向 CentOS/RHEL el9 系列。 |
+| 操作系统 | 已验证 Alibaba Cloud Linux 4 与 CentOS Stream 9；初始化脚本支持常见 RHEL 系与 Debian/Ubuntu。 |
 | 权限 | 首次安装 Docker/Compose/aws-cli 需要 root 或 sudo；日常运行需要访问 Docker daemon。 |
 | 网络 | 可访问上游 S3 endpoint 的 TCP 443；推荐使用私网或 VPC endpoint。 |
 | 入口端口 | 本地验证默认 8443；WAF/CLB 后端推荐 HTTPS 443。 |
@@ -150,7 +150,7 @@ configure passed
 preflight PASS=21 WARN=0 FAIL=0
 deploy passed
 health passed
-smoke PASS=5 WARN=1 FAIL=0
+smoke PASS=6 WARN=1 FAIL=0
 acceptance passed
 ```
 
@@ -426,9 +426,17 @@ LINES=500 ./scripts/ops.sh audit
 ./scripts/smoke_test.sh
 ```
 
-冒烟会验证网关健康、错误虚拟凭证拒绝、PUT、GET 内容一致、HEAD，以及可选的 DELETE。预期结果通常为 `PASS=5 WARN=1 FAIL=0`；WARN 表示真实上游凭证没有删除权限。
+冒烟会验证网关健康、错误虚拟凭证拒绝、PUT、GET 内容一致、HEAD、含空格对象键，以及可选的 DELETE。真实上游凭证没有删除权限时通常为 `PASS=6 WARN=1 FAIL=0`；具备删除权限时为 `PASS=7 WARN=0 FAIL=0`。
 
-### 8.2 快速吞吐
+### 8.2 安全行为验收
+
+```bash
+./scripts/verify_security.sh
+```
+
+脚本会验证错误签名拦截、未认证请求不触达上游、桶级路由、写请求重放防护、虚拟密钥吊销与恢复、真实凭证隔离、审计归因和容器加固。它只在 `TEST_BUCKET` 的 `s3gw-verify/` 前缀下读写，但会临时禁用 `TEST_VIRT_AK`；请使用专用验收密钥，不要使用生产客户端密钥。脚本正常继续或异常退出时都会尝试恢复该密钥。
+
+### 8.3 快速吞吐
 
 ```bash
 SIZE_MB=64 ./scripts/speed_test.sh
@@ -436,7 +444,7 @@ SIZE_MB=64 ./scripts/speed_test.sh
 
 脚本会生成指定大小的随机对象，执行 PUT/GET，并对比 MD5。测试对象清理失败不会掩盖读写和完整性结果。
 
-### 8.3 阶梯压测
+### 8.4 阶梯压测
 
 ```bash
 SIZE_MB=64 \
@@ -456,11 +464,12 @@ CONCURRENCY_LIST="1 2 4 8 16 32" \
 
 `MODE=clb` 使用 IP 作为签名 endpoint，只能证明 CLB/IP 数据链路和容量，不能证明 WAF 对最终业务域名的 Host/SigV4 保真。WAF 最终验收必须让标准 S3 客户端通过真实或受控临时 DNS 访问正式域名。
 
-### 8.4 已验证容量边界
+### 8.5 已验证容量边界
 
 | 测试场景 | 结果 | 结论 |
 |---|---|---|
-| 2 vCPU / 7.4 GiB ECS，64 MiB 对象 | 并发 32 成功 | 可作为中等对象的单机参考，不等于所有环境承诺值。 |
+| 4 vCPU / 7.3 GiB ECS，64 MiB 对象 | 并发 1 至 16 的 PUT/GET 全部成功 | 4 GiB proxy 限额下的当前默认安全阶梯。 |
+| 同一主机，64 MiB 对象并发 32 | PUT 31/32；proxy OOM 重启 2 次 | 已验证失败边界，不应作为单机承诺。 |
 | 256 MiB 对象 | 并发 4 和 8 成功 | 大对象高并发需要重点观察 proxy 内存。 |
 | 256 MiB，对象并发 16 | `sigv4-proxy` 触发 OOM | 生产应限制大对象并发或横向扩容。 |
 | 公网 CLB，32 MiB | 并发 1 至 32 成功 | 公网吞吐受链路和客户端出口限制，不能替代内网容量测试。 |
@@ -528,18 +537,21 @@ CONCURRENCY_LIST="1 2 4 8 16 32" \
 - [ ] 已验证 `ops.sh doctor` 和 `ops.sh bundle` 可用于支持排查。
 ## 十二、已完成的真实验证
 
-项目已在重装后的 CentOS Stream 9 ECS 上完成从零交付验证。初始主机没有 Docker、Compose 和 aws-cli；通过 `init_host.sh` 完成依赖初始化后，使用参数化 `acceptance.sh` 完成配置、部署、健康检查和冒烟测试。
+项目已在重装后的 Alibaba Cloud Linux 4 ECS 上完成从零交付验证。初始主机没有 Docker、Compose 和 aws-cli；通过 `init_host.sh` 完成依赖初始化后，使用参数化 `acceptance.sh` 完成配置、部署、健康检查和冒烟测试。
 
 | 验证项 | 结果 |
 |---|---|
 | 预检 | `PASS=21 WARN=0 FAIL=0` |
-| 冒烟 | `PASS=5 WARN=1 FAIL=0`；WARN 来自 DeleteObject 权限不足。 |
-| 快速吞吐 | 8 MiB PUT、GET 和 MD5 校验通过。 |
+| 冒烟 | `PASS=7 WARN=0 FAIL=0`；含空格对象键回归。 |
+| 公网串行功能 | `PASS=10/10`；覆盖空对象、特殊对象键、Metadata、Range、CopyObject、Multipart 和清理。 |
+| 安全行为 | `PASS=23 WARN=0 FAIL=0`。 |
+| 重复部署回归 | 四个容器全部运行，restart=0、OOM=0、错误日志=0、测试残留=0。 |
+| 快速吞吐 | 64 MiB PUT、GET 和 MD5 校验通过。 |
 | CLB 业务链路 | 经 CLB 的签名 PUT/GET 和内容比对成功。 |
 | 公网健康检查 | 安全加固后返回 403，符合健康来源白名单预期。 |
 | 未知 Host | 由 nginx 默认 server 关闭连接，不进入业务处理。 |
 
-这些数据用于证明交付流程和安全机制已经实际验证，不应直接视为客户生产 SLA。客户上线前仍需在自己的对象存储、WAF、网络、主机规格和业务负载下完成验收与容量测试。
+这些数据用于证明交付流程和安全机制已经实际验证，不应直接视为客户生产 SLA。当前结论是“功能生产候选通过”；公网 IP 与自签证书仅用于受控验收。客户上线前仍需使用正式域名和受信任证书，经 WAF/CLB 完成最终链路验收，并在自己的对象存储、网络、主机规格和业务负载下完成容量验证。
 
 ## 十三、快速索引
 
@@ -626,7 +638,8 @@ shasum -a 256 deliver/s3gw-*.tgz
 
 | 测试类型 | 对象/并发 | 结果 | 用途 |
 |---|---|---|---|
-| 网关完整链路 | 64 MiB，并发 32 | PUT/GET 均成功 | 单机中等对象参考 |
+| 网关完整链路（4 vCPU / 7.3 GiB） | 64 MiB，并发 1–16 | PUT/GET 全部成功 | 4 GiB proxy 限额下的当前默认安全阶梯 |
+| 网关完整链路（同一主机） | 64 MiB，并发 32 | PUT 31/32，proxy OOM 重启 2 次 | 当前失败边界，需限并发或扩容 |
 | 网关完整链路 | 256 MiB，并发 4/8 | 成功 | 大对象安全容量参考 |
 | 网关完整链路 | 256 MiB，并发 16 | sigv4-proxy OOM | 失败边界，需限并发或扩容 |
 | ECS 到上游私网直连 | 100 MB 单流 | PUT 约 81 MB/s，GET 约 92 MB/s | 上游内网链路参考 |
@@ -637,6 +650,6 @@ shasum -a 256 deliver/s3gw-*.tgz
 
 ### 15.5 交付包与客户现场安全边界
 
-当前 `scripts/package.sh` 生成的交付包会排除 `.env`、`auth/keys.json` 的真实内容、证书、日志、支持包、Git 目录和历史备份目录，并预编译 Linux amd64 的 authd/creds 二进制。包内仅保留 `.env.example`、空的 `auth/keys.json` 占位、CA bundle 和源码/脚本。
+当前 `scripts/package.sh` 生成的交付包会排除 `.env`、`auth/keys.json` 的真实内容、证书、日志、支持包、Git 目录和历史备份目录，并预编译 Linux amd64 的 authd/creds 二进制。包内还包含经过实测的 S3 兼容修复版 sigv4-proxy 镜像归档、补丁来源与 SHA-256、第三方许可证；目标主机无需现场构建该代理镜像。
 
 客户现场的安全责任边界仍然明确：客户负责保护下载包、真实凭证、业务域名证书、WAF/CLB 配置和安全组；网关负责虚拟凭证验签、真实凭证隔离、出站重签、审计和热吊销。上线前应核对压缩包 SHA-256，并先执行 `preflight.sh` 和 `acceptance.sh`，不要直接把测试目录复制为生产目录。

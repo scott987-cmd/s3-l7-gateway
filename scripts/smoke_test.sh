@@ -23,7 +23,8 @@ cd "$(dirname "$0")/.." || exit 1
 set -a; [[ -f .env ]] && . ./.env; set +a
 
 GW_PORT="${GW_LISTEN_PORT:-8443}"
-ENDPOINT="https://127.0.0.1:${GW_PORT}"
+ENDPOINT="${GW_ENDPOINT:-https://127.0.0.1:${GW_PORT}}"
+EXPECTED_HEALTH_STATUS="${EXPECTED_HEALTH_STATUS:-200}"
 BUCKET="${TEST_BUCKET:?请在 .env 设置 TEST_BUCKET}"
 KEY="${TEST_KEY:-s3gw-smoke-test.txt}"
 VIRT_AK="${TEST_VIRT_AK:?请在 .env 设置 TEST_VIRT_AK（客户端虚拟 AK）}"
@@ -55,12 +56,16 @@ TMPDIR_LOCAL="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_LOCAL"' EXIT
 SRC="$TMPDIR_LOCAL/src.txt"
 DST="$TMPDIR_LOCAL/dst.txt"
+SPECIAL_DST="$TMPDIR_LOCAL/special-dst.txt"
 STAMP="$(date +%s)"
 echo "s3gw smoke test @ $STAMP :: hello S3 via virtual AK/SK" > "$SRC"
+SPECIAL_KEY="${KEY}.space key"
 
 echo "== [0] healthz =="
 HZ="$(curl -sk -o /dev/null -w '%{http_code}' "${ENDPOINT}/healthz")"
-[[ "$HZ" == "200" ]] && ok "healthz=200" || ng "healthz=$HZ"
+[[ "$HZ" == "$EXPECTED_HEALTH_STATUS" ]] \
+  && ok "healthz=$HZ" \
+  || ng "healthz=$HZ (expected $EXPECTED_HEALTH_STATUS)"
 
 echo "== [1] 错误凭证应被拒绝(403) =="
 BOGUS="$(AWS_ACCESS_KEY_ID=AKBOGUS0000 AWS_SECRET_ACCESS_KEY=bogussecret \
@@ -92,7 +97,16 @@ else
   ng "head-object"
 fi
 
-echo "== [5] DELETE delete-object =="
+echo "== [5] percent-encoded object key =="
+if "${S3API[@]}" put-object --bucket "$BUCKET" --key "$SPECIAL_KEY" --body "$SRC" >/dev/null 2>&1 \
+   && "${S3API[@]}" get-object --bucket "$BUCKET" --key "$SPECIAL_KEY" "$SPECIAL_DST" >/dev/null 2>&1 \
+   && diff -q "$SRC" "$SPECIAL_DST" >/dev/null 2>&1; then
+  ok "space-containing key + content match"
+else
+  ng "space-containing key"
+fi
+
+echo "== [6] DELETE delete-object =="
 DEL_OUT="$("${S3API[@]}" delete-object --bucket "$BUCKET" --key "$KEY" 2>&1)"
 DEL_RC=$?
 if [[ "$DEL_RC" -eq 0 ]]; then
@@ -102,6 +116,7 @@ elif [[ "${TEST_REQUIRE_DELETE:-0}" != "1" ]] && echo "$DEL_OUT" | grep -Eq 'Acc
 else
   ng "delete-object"; echo "$DEL_OUT" | sed 's/^/      /' | head -5
 fi
+"${S3API[@]}" delete-object --bucket "$BUCKET" --key "$SPECIAL_KEY" >/dev/null 2>&1 || true
 
 echo ""
 echo "==================== 结果 ===================="

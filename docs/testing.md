@@ -14,11 +14,41 @@ PASS bogus creds rejected
 PASS put-object
 PASS get-object + content match
 PASS head-object
-WARN delete-object skipped: real S3 credentials do not allow DeleteObject
-PASS=5 WARN=1 FAIL=0
+PASS space-containing key + content match
+PASS delete-object
+PASS=7 WARN=0 FAIL=0
 ```
 
-`DeleteObject` is optional because many customer credentials are read/write-only and do not include delete permission. Set `TEST_REQUIRE_DELETE=1` if delete permission must be part of acceptance.
+`DeleteObject` is optional because many customer credentials do not include delete permission. In that case the expected summary is `PASS=6 WARN=1 FAIL=0`. Set `TEST_REQUIRE_DELETE=1` if delete permission must be part of acceptance.
+
+## Public-endpoint functional test
+
+Run the serial functional suite from a client host that can reach the public
+endpoint. It does not measure throughput or use concurrent workers:
+
+```bash
+GW_ENDPOINT=https://203.0.113.10:8443 ./scripts/public_functional_test.sh
+```
+
+The client host must have `.env`, `aws`, `jq`, and the test virtual
+credentials. The suite covers bucket operations, zero-byte objects, encoded
+keys, metadata, Range GET, CopyObject, a 10 MiB multipart transfer, listing,
+and cleanup. It uses a unique `s3gw-public-functional/` prefix and verifies
+that no objects remain.
+
+## Security behavior verification
+
+After deployment and the smoke test pass, run:
+
+```bash
+./scripts/verify_security.sh
+```
+
+This verifies invalid-signature rejection, that unauthenticated requests do not reach the upstream, bucket-level routing, write-request replay protection, virtual-key revocation and recovery, real-credential isolation, audit attribution, and container hardening.
+
+The script writes only under the `s3gw-verify/` prefix in `TEST_BUCKET`. It temporarily disables `TEST_VIRT_AK`, restores it before continuing, and registers an exit handler that retries recovery if the run is interrupted. Use a dedicated acceptance key rather than a production client key. If the upstream credential lacks `DeleteObject`, cleanup reports a warning and the operator must remove the test prefix through an approved credential.
+
+Exit codes are `0` for a clean pass, `1` for pass with warnings, and `2` for a failed security assertion.
 
 ## Quick throughput test
 
@@ -89,6 +119,12 @@ The complete WAF/TLS checklist is in [`security-waf.md`](security-waf.md).
 - `403` with populated `access_key` and upstream status: upstream object storage denied the real credential or policy.
 - `502` from Nginx with `upstream prematurely closed`: usually `sigv4-proxy` crash/reset or upstream reset.
 - OOM in `dmesg`: reduce large-object concurrency or scale out.
+
+## Latest measured boundary
+
+On a clean 4 vCPU / 7.3 GiB Alibaba Cloud Linux 4 ECS with `SIGV4_PROXY_MEM_LIMIT=4g`, 64 MiB PUT and GET steps at concurrency 1, 2, 4, 8 and 16 all succeeded. At concurrency 16, measured aggregate throughput was 146.29 MiB/s PUT and 113.78 MiB/s GET, with the proxy using about 3.13 GiB.
+
+At concurrency 32, 31 of 32 PUTs succeeded and the proxy hit its cgroup memory limit twice. Treat the default `1 2 4 8 16` list as the validated stair-step for this host size; higher large-object concurrency requires workload limits or horizontal scaling.
 
 ## Security noise during public exposure
 

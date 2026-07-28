@@ -106,7 +106,7 @@ See [`security-waf.md`](security-waf.md) for the full security baseline and fail
 
 In the tested 2 vCPU / 7.4 GiB ECS:
 
-- 64 MiB objects succeeded up to concurrency 32.
+- On the latest 4 vCPU / 7.3 GiB run, 64 MiB objects succeeded through concurrency 16; concurrency 32 exceeded the 4 GiB proxy limit.
 - 256 MiB objects succeeded at concurrency 4 and 8.
 - 256 MiB x concurrency 16 triggered `aws-sigv4-proxy` OOM.
 

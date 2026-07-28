@@ -1,0 +1,92 @@
+diff --git a/handler/proxy_client.go b/handler/proxy_client.go
+index 88acd4e..fcbc949 100644
+--- a/handler/proxy_client.go
++++ b/handler/proxy_client.go
+@@ -25,8 +25,8 @@ import (
+ 	"time"
+ 
+ 	"github.com/aws/aws-sdk-go/aws/endpoints"
+-	"github.com/aws/aws-sdk-go/private/protocol/rest"
+ 	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
++	"github.com/aws/aws-sdk-go/private/protocol/rest"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+@@ -68,7 +68,7 @@ func (p *ProxyClient) sign(req *http.Request, service *endpoints.ResolvedEndpoin
+ 		p.Signer.DisableURIPathEscaping = true
+ 
+ 		req.URL.RawPath = rest.EscapePath(req.URL.Path, false)
+-		
++
+ 		// Enable URI escaping for subsequent calls.
+ 		defer func() {
+ 			p.Signer.DisableURIPathEscaping = false
+@@ -187,26 +187,6 @@ func (p *ProxyClient) Do(req *http.Request) (*http.Response, error) {
+ 		return nil, fmt.Errorf("unable to determine service from host: %s", req.Host)
+ 	}
+ 
+-	if err := p.sign(proxyReq, service); err != nil {
+-		return nil, err
+-	}
+-
+-	// go Documentation net/http, func (*Request) Write: If Body is present,
+-	// Content-Length is <= 0 and TransferEncoding hasn't been set to
+-	// "identity", Write adds "Transfer-Encoding: chunked" to the header.
+-	// Body is closed after it is sent.
+-	//
+-	// Service like S3 does not support chunk encoding. We need to manipulate
+-	// the Body value after signv4 signing because the signing process wraps the
+-	// original body into another struct, which will result in
+-	// Transfer-Encoding: chunked being set.
+-	if !reqChunked {
+-		// Set to identity to prevent write() from setting it to chunked.
+-		proxyReq.TransferEncoding = []string{"identity"}
+-	} else {
+-		proxyReq.TransferEncoding = req.TransferEncoding
+-	}
+-
+ 	// Remove any headers specified
+ 	for _, header := range p.StripRequestHeaders {
+ 		log.WithField("StripHeader", string(header)).Debug("Stripping Header:")
+@@ -227,12 +207,40 @@ func (p *ProxyClient) Do(req *http.Request) (*http.Response, error) {
+ 		proxyReq.Header.Set(newHeaderName, headerValue)
+ 	}
+ 
+-	// Add origin headers after request is signed (no overwrite)
++	// Add origin headers before signing so x-amz-* business headers (for
++	// example object metadata) are covered by the new upstream signature.
+ 	copyHeaderWithoutOverwrite(proxyReq.Header, req.Header)
+ 
+ 	// Add custom headers (no overwrite)
+ 	copyHeaderWithoutOverwrite(proxyReq.Header, p.CustomHeaders)
+ 
++	if err := p.sign(proxyReq, service); err != nil {
++		return nil, err
++	}
++
++	// go Documentation net/http, func (*Request) Write: If Body is present,
++	// Content-Length is <= 0 and TransferEncoding hasn't been set to
++	// "identity", Write adds "Transfer-Encoding: chunked" to the header.
++	// Body is closed after it is sent.
++	//
++	// Service like S3 does not support chunk encoding. We need to manipulate
++	// the Body value after signv4 signing because the signing process wraps the
++	// original body into another struct, which will result in
++	// Transfer-Encoding: chunked being set.
++	if !reqChunked {
++		// Set to identity to prevent write() from setting it to chunked.
++		proxyReq.TransferEncoding = []string{"identity"}
++		// A non-nil empty body combined with identity transfer encoding makes
++		// net/http omit both Transfer-Encoding and Content-Length on the wire.
++		// S3-compatible services such as Aliyun OSS require Content-Length: 0
++		// for an empty PUT. Normalize it to NoBody so net/http emits that header.
++		if req.ContentLength == 0 {
++			proxyReq.Body = http.NoBody
++		}
++	} else {
++		proxyReq.TransferEncoding = req.TransferEncoding
++	}
++
+ 	if log.GetLevel() == log.DebugLevel {
+ 		proxyReqDump, err := httputil.DumpRequest(proxyReq, true)
+ 		if err != nil {

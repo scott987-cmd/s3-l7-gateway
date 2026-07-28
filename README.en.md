@@ -67,7 +67,7 @@ configure passed
 preflight PASS=21 WARN=0 FAIL=0
 deploy passed
 health passed
-smoke PASS=5 WARN=1 FAIL=0
+smoke PASS=6 WARN=1 FAIL=0
 acceptance passed
 ```
 
@@ -124,27 +124,33 @@ The cost is real and measured. On a controlled intranet test with a fixed 256-by
 
 ## Verified, and where it breaks
 
-From-zero delivery on a freshly reinstalled CentOS Stream 9 ECS with no Docker, Compose or aws-cli present:
+From-zero delivery on a freshly reinstalled Alibaba Cloud Linux 4 ECS with no Docker, Compose or aws-cli present:
 
 | Check | Result |
 |---|---|
 | Preflight | `PASS=21 WARN=0 FAIL=0` |
-| Smoke | `PASS=5 WARN=1 FAIL=0` (warning: no `DeleteObject`) |
-| Quick throughput | 8 MiB PUT / GET with MD5 match |
+| Smoke | `PASS=7 WARN=0 FAIL=0`, including a space-containing object key |
+| Public serial functionality | `PASS=10/10`: zero-byte objects, encoded keys, metadata, Range, CopyObject, multipart, and cleanup |
+| Security behavior | `PASS=23 WARN=0 FAIL=0` |
+| Repeat-deploy regression | All four containers running; restart=0, OOM=0, error logs=0, test residue=0 |
+| Quick throughput | 64 MiB PUT / GET with MD5 match |
 | Public health probe | 403 after hardening, matching the source allowlist |
 | Unknown Host | Connection closed by the nginx default server |
 
-Capacity on 2 vCPU / 7.4 GiB — including the failure boundary:
+Latest capacity validation on 4 vCPU / 7.3 GiB with `SIGV4_PROXY_MEM_LIMIT=4g`:
 
 | Scenario | Result |
 |---|---|
-| 64 MiB object, concurrency 32 | Succeeded |
-| 256 MiB object, concurrency 4 / 8 | Succeeded |
-| 256 MiB object, concurrency 16 | `sigv4-proxy` OOM |
+| 64 MiB, concurrency 1 / 2 / 4 / 8 / 16 | All PUT and GET operations succeeded; concurrency 16 reached 146.29 / 113.78 MiB/s |
+| 64 MiB, concurrency 32 | 31/32 PUTs succeeded; `sigv4-proxy` OOM-restarted twice at the 4 GiB limit |
+| 256 MiB, concurrency 4 / 8 (historical 2 vCPU run) | Succeeded |
+| 256 MiB, concurrency 16 (historical 2 vCPU run) | `sigv4-proxy` OOM |
 
-> **A note on these numbers.** They were produced by `stress_test.sh` before a defect in it was fixed: every worker in a concurrency batch landed on the **same object key** rather than distinct objects, because of when shell variables were expanded. The concurrency levels and object sizes were real, and the `sigv4-proxy` OOM at 256 MiB × 16 still holds (the memory pressure comes from concurrent large-object streams themselves) — but throughput figures should be re-measured with the fixed tool in your own environment.
+The latest 64 MiB figures use the corrected distinct-object test and failure exit status. The default stair-step test stops at concurrency 16; higher large-object concurrency is capacity exploration and should be handled through scaling or workload-side limits.
 
 `SIGV4_PROXY_MEM_LIMIT=4g` bounds the blast radius but does not remove the large-object memory characteristic. **Re-test at your own object sizes, concurrency and host size before production.**
+
+The current conclusion is **functionally production-candidate ready**. The public IP and self-signed certificate were used only for controlled acceptance. Before production cutover, use a trusted certificate and business domain, place WAF/LB in front, narrow security-group and health-check sources, verify that signed HTTP semantics are preserved, and alert on restarts, OOM, 5xx responses, and certificate expiry. See the [go-live status](https://scott987-cmd.github.io/s3-l7-gateway/#acceptance).
 
 ## Not supported today
 

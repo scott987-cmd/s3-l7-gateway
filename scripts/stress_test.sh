@@ -44,6 +44,7 @@ RESULTS="$WORKDIR/results-${MODE}-${TS}.tsv"
 ERRDIR="$WORKDIR/errors-${MODE}-${TS}"
 mkdir -p "$ERRDIR"
 printf 'mode\tdirection\tsize_mb\tconcurrency\trounds\tsuccess\tfail\tseconds\tthroughput_mib_s\n' > "$RESULTS"
+TOTAL_FAIL=0
 
 echo "== stress mode=$MODE endpoint=$ENDPOINT bucket=$BUCKET size=${SIZE_MB}MB rounds=$ROUNDS directions=$DIRECTION"
 echo "== payload_md5=$MD5_UP workdir=$WORKDIR"
@@ -87,9 +88,10 @@ bench_dir() {
   total_ops=$((success+fail))
   mib_s="$(awk -v mb="$SIZE_MB" -v ok="$success" -v sec="$elapsed" 'BEGIN{printf "%.2f", (mb*ok)/sec}')"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$dir" "$SIZE_MB" "$c" "$ROUNDS" "$success" "$fail" "$elapsed" "$mib_s" | tee -a "$RESULTS"
+  TOTAL_FAIL=$((TOTAL_FAIL+fail))
   if [[ "$fail" -gt 0 ]]; then
     echo "!! first errors for $dir concurrency=$c total_ops=$total_ops"
-    find "$ERRDIR" -name "${dir}-c${c}-*.err" -size +0 -print -exec sh -c 'echo "---- $1"; sed -n "1,8p" "$1"' sh {} \; | head -80
+    find "$ERRDIR" -name "${dir}-c${c}-*.err" -size +0 -print -exec sh -c 'echo "---- $1"; sed -n "1,8p" "$1"' sh {} \; | head -80 || true
   fi
 }
 
@@ -97,7 +99,7 @@ for c in $CONCURRENCY_LIST; do
   if [[ "$DIRECTION" == "put" || "$DIRECTION" == "both" ]]; then bench_dir put "$c"; fi
   if [[ "$DIRECTION" == "get" || "$DIRECTION" == "both" ]]; then bench_dir get "$c"; fi
   echo "-- docker stats snapshot --"
-  docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}' | grep -E 's3gw-deploy|NAME' || true
+  docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}' | grep -E 's3gw|NAME' || true
   echo "-- ss summary --"
   ss -s | sed -n '1,8p'
   echo
@@ -105,3 +107,8 @@ done
 
 echo "== results: $RESULTS"
 cat "$RESULTS"
+if [[ "$TOTAL_FAIL" -gt 0 ]]; then
+  echo "== FAIL: $TOTAL_FAIL operation(s) failed"
+  exit 1
+fi
+echo "== PASS: all operations succeeded"

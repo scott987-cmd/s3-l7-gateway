@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>S3 兼容对象存储七层安全网关 — 方案与四层对比</title>
-<meta name="description" content="让外部调用方用标准 S3 SDK 访问私有对象存储，但永远拿不到真实 AK/SK。虚拟凭证验签 + 真实凭证重签，含四层透传与七层网关的实测对比。">
+<title>S3 兼容对象存储七层安全网关 — 生产接入与验收方案</title>
+<meta name="description" content="让外部调用方用标准 S3 SDK 安全访问私有对象存储。虚拟凭证验签、真实凭证重签、调用方级审计与秒级吊销，附生产门禁和真实环境验收结果。">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9B%A1%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <style>
 :root{
@@ -74,6 +74,12 @@ header.nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--b
   border-radius:9px;border:1px solid var(--line);background:var(--bg-card);color:var(--fg)!important}
 .nav-gh:hover{border-color:var(--fg-faint);text-decoration:none}
 @media(max-width:1000px){.nav-links a.hide-sm{display:none}}
+@media(max-width:640px){
+  .nav-in{gap:10px}
+  .nav-links{gap:8px}
+  .nav-links>a:not(.nav-gh){display:none}
+  .nav-gh{padding:7px 10px}
+}
 
 .hero{padding:70px 0 52px;position:relative;overflow:hidden}
 .hero::before{content:"";position:absolute;inset:-40% 20% auto -10%;height:520px;
@@ -193,7 +199,10 @@ code.inl{font-family:var(--mono);font-size:.88em;background:var(--bg-soft);borde
 .bar-val small{color:var(--fg-faint);font-family:var(--sans);font-size:11.5px;margin-left:5px}
 
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.stats.four{grid-template-columns:repeat(4,1fr)}
+@media(max-width:960px){.stats.four{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:760px){.stats{grid-template-columns:1fr}}
+@media(max-width:560px){.stats.four{grid-template-columns:1fr}}
 .stat{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
 .stat .sl{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px}
 .stat .sv{font-size:32px;font-weight:700;letter-spacing:-.03em;line-height:1;color:var(--fg);font-variant-numeric:tabular-nums}
@@ -245,6 +254,7 @@ footer{border-top:1px solid var(--line);padding:38px 0 54px;color:var(--fg-faint
       <a href="#arch">架构</a>
       <a href="#lifecycle" class="hide-sm">双重签名</a>
       <a href="#compare" class="hi">四层 vs 七层</a>
+      <a href="#acceptance" class="hide-sm">上线状态</a>
       <a href="#deploy" class="hide-sm">部署</a>
       <a href="#keys">密钥与应急</a>
       <a href="#verify" class="hide-sm">验证结果</a>
@@ -265,7 +275,7 @@ footer{border-top:1px solid var(--line);padding:38px 0 54px;color:var(--fg-faint
   <div class="wrap hero-in">
     <div class="eyebrow">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
-      已在真实环境完成从零交付验证
+      2026-07-28 生产候选验收 · 公网功能 17 / 17
     </div>
     <h1>调用方用标准 S3 SDK，<span class="grad">但拿不到真实凭证</span></h1>
     <p class="lede">
@@ -275,7 +285,7 @@ footer{border-top:1px solid var(--line);padding:38px 0 54px;color:var(--fg-faint
       一应用一把密钥，泄露时<b>秒级吊销单把</b>，不影响其他调用方，也不需要轮换真实凭证。
     </p>
     <div class="cta">
-      <a class="btn btn-primary" href="#compare">先看四层 vs 七层怎么选
+      <a class="btn btn-primary" href="#acceptance">查看上线结论
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </a>
       <a class="btn btn-ghost" href="https://github.com/scott987-cmd/s3-l7-gateway">获取源码</a>
@@ -286,6 +296,7 @@ footer{border-top:1px solid var(--line);padding:38px 0 54px;color:var(--fg-faint
       <span class="pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>秒级吊销</span>
       <span class="pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>调用方级审计</span>
       <span class="pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>客户端零改造</span>
+      <span class="pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>重复部署已回归</span>
     </div>
 
     <div class="thirdparty">
@@ -294,6 +305,74 @@ footer{border-top:1px solid var(--line);padding:38px 0 54px;color:var(--fg-faint
     </div>
   </div>
 </div>
+
+<!-- ============ 生产候选验收 ============ -->
+<section id="acceptance">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-label">生产候选验收 · 2026-07-28</div>
+      <h2>功能链路已经就绪，正式切流须完成生产基础设施门禁</h2>
+      <p>在重装后的 Alibaba Cloud Linux 4 ECS 上，网关以 <code class="inl">0.0.0.0:8443</code> 提供 HTTPS，经公网地址完成串行功能验收。以下数字是可复现的脚本结果，不包含本轮性能测试。</p>
+    </div>
+
+    <div class="stats four" style="margin-bottom:18px">
+      <div class="stat good">
+        <div class="sl">公网功能</div>
+        <div class="sv">17 / 17</div>
+        <div class="sd">标准冒烟 7 项 + 扩展功能 10 项，全部通过</div>
+      </div>
+      <div class="stat good">
+        <div class="sl">安全行为</div>
+        <div class="sv">23 / 23</div>
+        <div class="sd">拒绝、隔离、重放、吊销、审计和容器加固</div>
+      </div>
+      <div class="stat good">
+        <div class="sl">运行状态</div>
+        <div class="sv">4 / 4</div>
+        <div class="sd">全部服务运行；restart=0，OOM=0，无错误日志</div>
+      </div>
+      <div class="stat good">
+        <div class="sl">测试残留</div>
+        <div class="sv">0</div>
+        <div class="sd">验收前缀已清理，对象存储无测试对象残留</div>
+      </div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>本轮实际通过</h3>
+        <ul class="ynlist" style="margin-top:12px">
+          <li><span class="m ok">✓</span><span>错误凭证拒绝，正确虚拟凭证可访问目标 bucket</span></li>
+          <li><span class="m ok">✓</span><span>PUT / GET / HEAD / DELETE、空对象和内容一致性</span></li>
+          <li><span class="m ok">✓</span><span>中文、空格、百分号与深层目录对象键</span></li>
+          <li><span class="m ok">✓</span><span>Metadata、Content-Type、Range GET 与 CopyObject</span></li>
+          <li><span class="m ok">✓</span><span>10 MiB Multipart Upload / Download 与内容比对</span></li>
+          <li><span class="m ok">✓</span><span>重复执行一键部署后，全链路再次通过</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>正式生产切流门禁</h3>
+        <ul class="ynlist" style="margin-top:12px">
+          <li><span class="m no">!</span><span>使用正式业务域名和受客户端信任的 CA 证书，禁止 <code class="inl">-k</code> / <code class="inl">verify=False</code></span></li>
+          <li><span class="m no">!</span><span>前置 WAF / CLB，安全组仅允许其回源 CIDR 与必要运维网段</span></li>
+          <li><span class="m no">!</span><span>确认 WAF 不改写 Host、path、query、签名头和请求体语义</span></li>
+          <li><span class="m no">!</span><span>接入容器重启、OOM、5xx、鉴权拒绝率和证书到期告警</span></li>
+          <li><span class="m no">!</span><span>按客户真实对象大小和并发目标完成容量验收</span></li>
+          <li><span class="m no">!</span><span>为生产调用方独立签发虚拟密钥并记录负责人、用途和到期时间</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note good" style="margin-top:18px">
+      <span class="ni">✓</span>
+      <div><b>结论：功能生产候选通过。</b>网关程序、部署程序和公网 S3 功能已具备交付条件；完成右侧基础设施门禁后，才能批准正式生产切流。</div>
+    </div>
+    <div class="note" style="margin-top:12px">
+      <span class="ni">!</span>
+      <div><b>当前公网 IP + 自签证书仅用于受控验收。</b>它证明公网数据路径和网关功能，不等同于生产 TLS、WAF 防护和最终业务域名链路验收。</div>
+    </div>
+  </div>
+</section>
 
 <!-- ============ 架构 ============ -->
 <section id="arch">
@@ -626,7 +705,7 @@ export S3_SECRET_KEY=...
 
     <div class="note good" style="margin-top:20px">
       <span class="ni">✓</span>
-      <div><b>验收成功的样子。</b><code class="inl">preflight PASS=21 WARN=0 FAIL=0</code> → <code class="inl">smoke PASS=5 WARN=1 FAIL=0</code> → <code class="inl">acceptance passed</code>。那个 WARN 通常是真实上游凭证没有 <code class="inl">DeleteObject</code> 权限——这正是最小权限设计在生效。客户明确要求必须能删时设 <code class="inl">TEST_REQUIRE_DELETE=1</code>。</div>
+      <div><b>当前验收结果。</b><code class="inl">preflight PASS=21 WARN=0 FAIL=0</code> → <code class="inl">smoke PASS=7 WARN=0 FAIL=0</code> → <code class="inl">public functional 10/10</code>。若客户凭证按最小权限不授予 DeleteObject，冒烟中的删除步骤会显示 WARN；客户明确要求必须能删时设 <code class="inl">TEST_REQUIRE_DELETE=1</code>。</div>
     </div>
   </div>
 </section>
@@ -717,7 +796,7 @@ LINES=500 ./scripts/ops.sh audit
     <div class="sec-head">
       <div class="sec-label">七、验证结果与容量边界</div>
       <h2>包含失败边界，而不只是成功用例</h2>
-      <p>在重装后的 CentOS Stream 9 ECS 上从零完成交付验证——初始主机没有 Docker、Compose 和 aws-cli。</p>
+      <p>在重装后的 Alibaba Cloud Linux 4 ECS 上从零完成交付验证——初始主机没有 Docker、Compose 和 aws-cli。</p>
     </div>
 
     <div class="stats" style="margin-bottom:18px">
@@ -726,15 +805,15 @@ LINES=500 ./scripts/ops.sh audit
         <div class="sv">21 / 0 / 0</div>
         <div class="sd">PASS / WARN / FAIL — 配置、依赖、上游连通与端口全部通过</div>
       </div>
-      <div class="stat warn">
+      <div class="stat good">
         <div class="sl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 9v5M12 18h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>冒烟</div>
-        <div class="sv">5 / 1 / 0</div>
-        <div class="sd">唯一 WARN 是真实凭证没有 <b>DeleteObject</b> 权限，属最小权限预期</div>
+        <div class="sv">7 / 0 / 0</div>
+        <div class="sd">含空格对象键回归；PUT / GET / HEAD / DELETE 全部通过</div>
       </div>
       <div class="stat bad">
         <div class="sl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 9v5M12 18h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>失败边界</div>
-        <div class="sv">256 MiB × 16</div>
-        <div class="sd">该并发下 <b>sigv4-proxy 触发 OOM</b>；这是必须知道的上限，不是隐藏项</div>
+        <div class="sv">64 MiB × 32</div>
+        <div class="sd">4 GiB 限额下 <b>sigv4-proxy 触发 OOM</b>；默认安全阶梯止于并发 16</div>
       </div>
     </div>
 
@@ -743,22 +822,24 @@ LINES=500 ./scripts/ops.sh audit
         <h3>安全行为验证</h3>
         <ul class="ynlist" style="margin-top:12px">
           <li><span class="m ok">✓</span><span>错误虚拟凭证被拒，且不产生上游状态</span></li>
-          <li><span class="m ok">✓</span><span>8 MiB PUT / GET 与 MD5 校验通过</span></li>
+          <li><span class="m ok">✓</span><span>公网标准冒烟 7 / 7，扩展功能 10 / 10</span></li>
+          <li><span class="m ok">✓</span><span>空对象、Metadata、Range、CopyObject 和 Multipart 均通过</span></li>
+          <li><span class="m ok">✓</span><span>64 MiB PUT / GET 与 MD5 校验通过</span></li>
           <li><span class="m ok">✓</span><span>经负载均衡的签名 PUT/GET 与内容比对成功</span></li>
           <li><span class="m ok">✓</span><span>加固后公网探测 <code class="inl">/healthz</code> 返回 403，符合来源白名单预期</span></li>
           <li><span class="m ok">✓</span><span>未知 Host 由 nginx 默认 server 关闭连接，不进入业务处理</span></li>
         </ul>
       </div>
       <div class="card">
-        <h3>容量参考（2 vCPU / 7.4 GiB）</h3>
+        <h3>容量参考（4 vCPU / 7.3 GiB）</h3>
         <div class="tw" style="margin-top:12px;border:0">
           <table style="min-width:0">
             <thead><tr><th>对象 / 并发</th><th>结果</th></tr></thead>
             <tbody>
-              <tr><td>64 MiB × 32</td><td><span class="badge g">成功</span></td></tr>
-              <tr><td>256 MiB × 4 / 8</td><td><span class="badge g">成功</span></td></tr>
-              <tr><td>256 MiB × 16</td><td><span class="badge r">proxy OOM</span></td></tr>
-              <tr><td>公网 32 MiB × 1–32</td><td><span class="badge n">成功，受公网链路限制</span></td></tr>
+              <tr><td>64 MiB × 1–16</td><td><span class="badge g">PUT / GET 全部成功</span></td></tr>
+              <tr><td>64 MiB × 32</td><td><span class="badge r">31/32 PUT；proxy OOM × 2</span></td></tr>
+              <tr><td>安全行为验收</td><td><span class="badge g">23 / 0 / 0</span></td></tr>
+              <tr><td>公网串行功能</td><td><span class="badge g">17 / 17；测试残留 0</span></td></tr>
             </tbody>
           </table>
         </div>
@@ -767,7 +848,7 @@ LINES=500 ./scripts/ops.sh audit
 
     <div class="note" style="margin-top:16px">
       <span class="ni">!</span>
-      <div><b>关于以上容量数字的说明。</b>这些数据由 <code class="inl">stress_test.sh</code> 在一处已修复的缺陷之前跑出：当时同一并发批次内的所有 worker 因变量展开时机问题落到了<b>同一个 object key</b> 上，而不是各自独立的对象。并发数与对象大小是真实的，256 MiB × 16 触发 OOM 的结论也仍然成立（内存压力来自并发大对象流本身）；但吞吐类数字建议用修复后的工具在你自己的环境重新测量。</div>
+      <div><b>关于以上容量数字的说明。</b>最新 64 MiB 数据由修复后的独立对象键和失败退出码工具测得。并发 16 时 PUT / GET 为 146.29 / 113.78 MiB/s；并发 32 已确认超过 4 GiB proxy 限额，不能作为单机承诺。</div>
     </div>
 
     <div class="note" style="margin-top:16px">
@@ -835,8 +916,8 @@ LINES=500 ./scripts/ops.sh audit
         <p>WAF 必须保持哪些语义、配置建议、健康检查来源收敛与典型误配的排查路径。</p>
       </a>
       <a class="card hoverable" href="https://github.com/scott987-cmd/s3-l7-gateway/blob/main/docs/testing.md">
-        <h3>测试与压测 →</h3>
-        <p>冒烟、快速吞吐、阶梯并发压测的用法，以及为什么 MODE=clb 不能替代域名链路验收。</p>
+        <h3>测试与上线验收 →</h3>
+        <p>公网串行功能、冒烟、安全验证和容量测试的用法，以及为什么 IP 链路不能替代最终业务域名验收。</p>
       </a>
       <a class="card hoverable" href="https://github.com/scott987-cmd/s3-l4-proxy">
         <h3>四层透传方案 →</h3>
@@ -850,7 +931,7 @@ LINES=500 ./scripts/ops.sh audit
 
 <footer>
   <div class="wrap foot-in">
-    <div>Apache-2.0 · 按「现状」提供，不附带任何担保 · 性能与容量数据为受控测试参考，非生产 SLA</div>
+    <div>更新于 2026-07-28 · Apache-2.0 · 性能与容量数据为受控测试参考，非生产 SLA</div>
     <div class="foot-links">
       <a href="https://github.com/scott987-cmd/s3-l7-gateway">GitHub</a>
       <a href="https://github.com/scott987-cmd/s3-l7-gateway/blob/main/README.md">中文 README</a>
